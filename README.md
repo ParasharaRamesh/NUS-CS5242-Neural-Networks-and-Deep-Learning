@@ -1,2 +1,2 @@
-# NUS-CS5340-Uncertainity-Modelling-in-AI
-Contains the code for each assignment provided in the CS5340 course
+# NUS-CS5242-Neural-Networks-and-Deep-Learning
+Contains the code for each assignment provided in the CS5242 course
