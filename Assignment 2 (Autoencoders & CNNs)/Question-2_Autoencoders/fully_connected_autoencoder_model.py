@@ -14,6 +14,8 @@ class FC_Autoencoder(nn.Module):
         latent_features = self.encoder(x)
         reconstructed_data = self.decoder(latent_features)
         return reconstructed_data
+
+
 class FullyConnectedEncoder(nn.Module):
     def __init__(self, Lambda):
         super(FullyConnectedEncoder, self).__init__()
