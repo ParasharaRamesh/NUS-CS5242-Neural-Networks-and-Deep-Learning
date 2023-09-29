@@ -73,9 +73,9 @@ class CNNDecoder(nn.Module):
         return self.decoder(x)
 
 
-if __name__ == '__main__':
-    encoder = CNNEncoder(2)
-    summary(encoder, (1,28,28), batch_dim = 0, col_names = ["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose = 1)
-    decoder = CNNDecoder(2)
-    summary(decoder, (2,), batch_dim = 0, col_names = ["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose = 1)
+# if __name__ == '__main__':
+#     encoder = CNNEncoder(2)
+#     summary(encoder, (1,28,28), batch_dim = 0, col_names = ["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose = 1)
+#     decoder = CNNDecoder(2)
+#     summary(decoder, (2,), batch_dim = 0, col_names = ["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose = 1)
 
