@@ -6,14 +6,17 @@ from torch.utils.data import DataLoader, Subset, random_split
 
 
 def create_train_data_loader(batch_size=32):
-    transform_train = transforms.Compose([
+    stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    transforms_to_apply = [
+        transforms.RandomCrop(32, padding=4, padding_mode='reflect'),
         transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
-        transforms.RandomRotation(15),  # Randomly rotate images by up to 15 degrees
+        transforms.RandomRotation(10),  # Randomly rotate images by up to 15 degrees
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # Randomly adjust brightness, contrast, saturation, and hue
+        # Randomly adjust brightness, contrast, saturation, and hue
         transforms.ToTensor(),  # Convert images to tensors
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize pixel values
-    ])
+        transforms.Normalize(*stats, inplace=True)  # Normalize pixel values
+    ]
+    transform_train = transforms.Compose(transforms_to_apply)
 
     train_dataset_with_augmentation = torchvision.datasets.CIFAR10(root='./data', download=True, train=True,
                                                                    transform=transform_train)
@@ -21,9 +24,10 @@ def create_train_data_loader(batch_size=32):
 
 
 def create_test_and_validation_data_loader(batch_size=32, validation_split=0.2):
+    stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize pixel values
+        transforms.Normalize(*stats, inplace=True)  # Normalize pixel values
     ])
 
     test_dataset = torchvision.datasets.CIFAR10(root='./data', download=True, train=False,
@@ -47,14 +51,17 @@ def create_test_and_validation_data_loader(batch_size=32, validation_split=0.2):
 
 
 def create_train_data_loader_with_num_instances(num_instances, batch_size=32):
-    transform_train = transforms.Compose([
+    stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    transforms_to_apply = [
+        transforms.RandomCrop(32, padding=4, padding_mode='reflect'),
         transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
-        transforms.RandomRotation(15),  # Randomly rotate images by up to 15 degrees
+        transforms.RandomRotation(10),  # Randomly rotate images by up to 15 degrees
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # Randomly adjust brightness, contrast, saturation, and hue
+        # Randomly adjust brightness, contrast, saturation, and hue
         transforms.ToTensor(),  # Convert images to tensors
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize pixel values
-    ])
+        transforms.Normalize(*stats, inplace=True)  # Normalize pixel values
+    ]
+    transform_train = transforms.Compose(transforms_to_apply)
 
     # Load the full CIFAR-10 training dataset
     full_train_dataset = torchvision.datasets.CIFAR10(root='./data', download=True, train=True,
@@ -77,7 +84,7 @@ def create_train_data_loader_with_num_instances(num_instances, batch_size=32):
 
 
 # if __name__ == '__main__':
-#     train_data_loader = create_train_data_loader_with_num_instances(10,32)
+#     train_data_loader = create_train_data_loader(32)
 #     for batch_idx, data in enumerate(train_data_loader):
 #         images, labels = data
 #         break

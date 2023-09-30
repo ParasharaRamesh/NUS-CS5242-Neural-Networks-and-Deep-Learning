@@ -5,6 +5,8 @@ from tqdm.auto import tqdm
 from model import *
 from data import *
 from torch.cuda.amp import autocast, GradScaler
+from validate_and_test import *
+
 
 def load_checkpointed_model_params(model, optimizer, resume_checkpoint):
     checkpoint = torch.load(resume_checkpoint)
@@ -23,7 +25,7 @@ def load_checkpointed_model_params(model, optimizer, resume_checkpoint):
 
 def save_model_checkpoint(experiment, model, optimizer, params, epoch, epoch_numbers, training_losses,
                           validation_losses, training_accuracy, validation_accuracy):
-    #create the directory if it doesnt exist
+    # create the directory if it doesnt exist
     model_save_directory = os.path.join(params["save_dir"], experiment)
     os.makedirs(model_save_directory, exist_ok=True)
 
@@ -42,63 +44,11 @@ def save_model_checkpoint(experiment, model, optimizer, params, epoch, epoch_num
     print(f"Save checkpointed the model at the path {checkpoint_path}")
 
 
-def perform_validation(criterion, device, model, val_loader):
-    model.eval()
-    val_loss = 0.0
-    val_correct_predictions = 0
-    total_val_samples = 0
-    with torch.no_grad():
-        for val_batch_idx, val_data in enumerate(val_loader):
-            val_images, val_labels = val_data
-            val_images = val_images.to(device)
-            val_labels = val_labels.to(device)
-            val_outputs = model(val_images)
-
-            # Validation loss update
-            val_loss += criterion(val_outputs, val_labels).item()
-
-            # Compute validation accuracy for this batch
-            val_predicted = torch.argmax(val_outputs.data, 1)
-            total_val_samples += val_labels.size(0)
-            val_correct_predictions += (val_predicted == val_labels).sum().item()
-
-    # Calculate average validation loss for the epoch
-    avg_val_loss_for_epoch = val_loss / len(val_loader)
-    # Calculate validation accuracy for the epoch
-    avg_val_accuracy = val_correct_predictions / total_val_samples
-    return avg_val_accuracy, avg_val_loss_for_epoch
-
-
-def perform_test(criterion, device, model, test_loader):
-    model.eval()
-    test_loss = 0.0
-    test_correct_predictions = 0
-    total_val_samples = 0
-    with torch.no_grad():
-        for val_batch_idx, val_data in enumerate(test_loader):
-            test_images, test_labels = val_data
-            test_images = test_images.to(device)
-            test_labels = test_labels.to(device)
-            val_outputs = model(test_images)
-
-            # Validation loss update
-            test_loss += criterion(val_outputs, test_labels).item()
-
-            # Compute validation accuracy for this batch
-            test_predicted = torch.argmax(val_outputs.data, 1)
-            total_val_samples += test_labels.size(0)
-            test_correct_predictions += (test_predicted == test_labels).sum().item()
-
-    # Calculate average validation loss for the epoch
-    avg_test_loss = test_loss / len(test_loader)
-    # Calculate validation accuracy for the epoch
-    avg_test_accuracy = test_correct_predictions / total_val_samples
-    return avg_test_accuracy, avg_test_loss
-
 def train_model(model, train_loader, val_loader, num_epochs, params, experiment, epoch_saver_count=5,
                 resume_checkpoint=None):
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.cuda.empty_cache()
 
     # Initialize the GradScaler for mixed precision training
     scaler = GradScaler()
@@ -112,7 +62,14 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
     validation_accuracy = []
 
     # Adam optimizer
-    optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'])
+    optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
+
+    # Set up one-cycle learning rate scheduler
+    sched = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, params['learning_rate'],
+        epochs=num_epochs,
+        steps_per_epoch=len(train_loader)
+    )
 
     # loss
     criterion = nn.CrossEntropyLoss()
@@ -150,7 +107,7 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
             images = images.to(device)
             labels = labels.to(device)
 
-            #dummy init
+            # dummy init
             outputs = None
             loss = None
 
@@ -161,11 +118,19 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
 
             loss = criterion(outputs, labels)
 
-            # training loss update
-            # Perform backpropagation with autocast and gradient scaling
+            # training loss update (Multi precision training for faster training)
             scaler.scale(loss).backward()
+
+            # Gradient clipping
+            nn.utils.clip_grad_value_(model.parameters(), params['grad_clip'])
+
+            #update optimizer but using GradientScaler mixed precision training
             scaler.step(optimizer)
             scaler.update()
+
+            #scheduler update
+            sched.step()
+
             epoch_training_loss += loss.item()
 
             # batch stats
@@ -213,6 +178,8 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
             }
 
         )
+
+        #Close the tqdm bat
         total_progress_bar.update(1)
 
         # Print state
