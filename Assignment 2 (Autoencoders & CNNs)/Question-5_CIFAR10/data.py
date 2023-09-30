@@ -9,20 +9,15 @@ def create_train_data_loader(batch_size=32):
     transform_train = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
         transforms.RandomRotation(15),  # Randomly rotate images by up to 15 degrees
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-        # Randomly adjust brightness, contrast, saturation, and hue
-        transforms.RandomResizedCrop(32, scale=(0.8, 1.0), ratio=(0.9, 1.1)),  # Randomly crop and resize
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-        # Random affine transformation
-        transforms.RandomErasing(p=0.5, scale=(0.02, 0.2), ratio=(0.3, 3.3), value=0, inplace=False),
-        # Randomly erase parts of the image
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # Randomly adjust brightness, contrast, saturation, and hue
         transforms.ToTensor(),  # Convert images to tensors
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize pixel values
     ])
 
     train_dataset_with_augmentation = torchvision.datasets.CIFAR10(root='./data', download=True, train=True,
                                                                    transform=transform_train)
-    return DataLoader(train_dataset_with_augmentation, batch_size=batch_size, shuffle=True)
+    return DataLoader(train_dataset_with_augmentation, batch_size=batch_size, shuffle=True, num_workers=2)
 
 
 def create_test_and_validation_data_loader(batch_size=32, validation_split=0.2):
@@ -55,13 +50,8 @@ def create_train_data_loader_with_num_instances(num_instances, batch_size=32):
     transform_train = transforms.Compose([
         transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
         transforms.RandomRotation(15),  # Randomly rotate images by up to 15 degrees
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-        # Randomly adjust brightness, contrast, saturation, and hue
-        transforms.RandomResizedCrop(32, scale=(0.8, 1.0), ratio=(0.9, 1.1)),  # Randomly crop and resize
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-        # Random affine transformation
-        transforms.RandomErasing(p=0.5, scale=(0.02, 0.2), ratio=(0.3, 3.3), value=0, inplace=False),
-        # Randomly erase parts of the image
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1), # Randomly adjust brightness, contrast, saturation, and hue
         transforms.ToTensor(),  # Convert images to tensors
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize pixel values
     ])
@@ -84,3 +74,11 @@ def create_train_data_loader_with_num_instances(num_instances, batch_size=32):
     train_loader = DataLoader(train_dataset_subset, batch_size=batch_size, shuffle=True)
 
     return train_loader
+
+
+# if __name__ == '__main__':
+#     train_data_loader = create_train_data_loader_with_num_instances(10,32)
+#     for batch_idx, data in enumerate(train_data_loader):
+#         images, labels = data
+#         break
+#     print("Success")

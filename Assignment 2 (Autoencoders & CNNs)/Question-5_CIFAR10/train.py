@@ -2,7 +2,9 @@ import torch
 from torch import optim, nn
 import os
 from tqdm.auto import tqdm
-
+from model import *
+from data import *
+from torch.cuda.amp import autocast, GradScaler
 
 def load_checkpointed_model_params(model, optimizer, resume_checkpoint):
     checkpoint = torch.load(resume_checkpoint)
@@ -19,7 +21,12 @@ def load_checkpointed_model_params(model, optimizer, resume_checkpoint):
     return start_epoch, epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy
 
 
-def save_model_checkpoint(experiment, model, optimizer, params, epoch, epoch_numbers, training_losses, validation_losses, training_accuracy, validation_accuracy):
+def save_model_checkpoint(experiment, model, optimizer, params, epoch, epoch_numbers, training_losses,
+                          validation_losses, training_accuracy, validation_accuracy):
+    #create the directory if it doesnt exist
+    model_save_directory = os.path.join(params["save_dir"], experiment)
+    os.makedirs(model_save_directory, exist_ok=True)
+
     # Checkpoint the model at the end of each epoch
     checkpoint_path = os.path.join(params["save_dir"], experiment, f'model_epoch_{epoch + 1}.pt')
     torch.save({
@@ -62,18 +69,39 @@ def perform_validation(criterion, device, model, val_loader):
     return avg_val_accuracy, avg_val_loss_for_epoch
 
 
-'''
-TODO: things to introduce.
-* early stopping
-* the moment I interrupt the program it should immeaditely checkpoint the state I want
-* In the tqdm bar I want to see the validation loss, final training loss, training accuracy and validation accuracy and also print it just to be safe
-* make it faster.
-'''
+def perform_test(criterion, device, model, test_loader):
+    model.eval()
+    test_loss = 0.0
+    test_correct_predictions = 0
+    total_val_samples = 0
+    with torch.no_grad():
+        for val_batch_idx, val_data in enumerate(test_loader):
+            test_images, test_labels = val_data
+            test_images = test_images.to(device)
+            test_labels = test_labels.to(device)
+            val_outputs = model(test_images)
 
+            # Validation loss update
+            test_loss += criterion(val_outputs, test_labels).item()
 
-def train_model(model, train_loader, val_loader, num_epochs, params, experiment, epoch_saver_count=5, resume_checkpoint=None):
+            # Compute validation accuracy for this batch
+            test_predicted = torch.argmax(val_outputs.data, 1)
+            total_val_samples += test_labels.size(0)
+            test_correct_predictions += (test_predicted == test_labels).sum().item()
+
+    # Calculate average validation loss for the epoch
+    avg_test_loss = test_loss / len(test_loader)
+    # Calculate validation accuracy for the epoch
+    avg_test_accuracy = test_correct_predictions / total_val_samples
+    return avg_test_accuracy, avg_test_loss
+
+def train_model(model, train_loader, val_loader, num_epochs, params, experiment, epoch_saver_count=5,
+                resume_checkpoint=None):
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Initialize the GradScaler for mixed precision training
+    scaler = GradScaler()
 
     # Things we are keeping track of
     start_epoch = 0
@@ -121,18 +149,28 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
             images, labels = data
             images = images.to(device)
             labels = labels.to(device)
-            outputs = model(images)
+
+            #dummy init
+            outputs = None
+            loss = None
+
+            # Wrap the forward pass and loss computation with autocast
+            with autocast():
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+            loss = criterion(outputs, labels)
 
             # training loss update
-            loss = criterion(outputs, images)
-            loss.backward()
-            optimizer.step()
+            # Perform backpropagation with autocast and gradient scaling
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             epoch_training_loss += loss.item()
 
+            # batch stats
             # Compute training accuracy for this batch
             predicted = torch.argmax(outputs.data, 1)
-
-            # batch stats
             batch_correct_predictions = (predicted == labels).sum().item()
             batch_size = labels.size(0)
 
@@ -147,7 +185,7 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
             epoch_progress_bar.update(1)
 
         # Close the epoch progress bar
-        # epoch_progress_bar.close()
+        epoch_progress_bar.close()
 
         # Calculate average loss for the epoch
         avg_training_loss_for_epoch = epoch_training_loss / len(train_loader)
@@ -185,6 +223,7 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
         # Save model checkpoint periodically
         need_to_save_model_checkpoint = (epoch + 1) % epoch_saver_count == 0
         if need_to_save_model_checkpoint:
+            print(f"Going to save model @ Epoch:{epoch + 1}")
             save_model_checkpoint(
                 experiment,
                 model,
@@ -204,4 +243,30 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
     # Return things needed for plotting
     return epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy
 
+
 # %%
+if __name__ == '__main__':
+    params = {
+        'batch_size': 32,
+        'learning_rate': 0.0045,
+        'save_dir': 'model_ckpts'
+    }
+    train_data_loader = create_train_data_loader(32)
+    test_data_loader, validation_data_loader = create_test_and_validation_data_loader(32)
+
+    full_experiment = "Full Data"
+    # Check if GPU is available, otherwise use CPU
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    full_cifar_model = CIFARClassifier()
+    full_cifar_model.to(device)
+
+    train_model(
+        full_cifar_model,
+        train_data_loader,
+        validation_data_loader,
+        2,
+        params,
+        full_experiment,
+        epoch_saver_count=1,
+        resume_checkpoint=None
+    )
