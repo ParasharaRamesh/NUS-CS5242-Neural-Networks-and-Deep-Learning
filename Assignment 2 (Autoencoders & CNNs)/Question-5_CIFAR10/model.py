@@ -12,7 +12,6 @@ class CIFARClassifier(nn.Module):
         self.res1 = self.conv_and_batch_norm_block(128, 128)
         self.res2 = self.conv_and_batch_norm_block(128, 128)
 
-
         # self.res1 = nn.Sequential(
         #     self.conv_and_batch_norm_block(128, 128),
         #     self.conv_and_batch_norm_block(128, 128),
@@ -34,23 +33,14 @@ class CIFARClassifier(nn.Module):
             nn.Flatten(),
 
             nn.Linear(512, 256),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Dropout(0.1),
 
-            nn.Linear(256, 128),
-            nn.ReLU(inplace=True),
+            nn.Linear(256, 64),
+            nn.ReLU(),
             nn.Dropout(0.1),
 
-            nn.Linear(128, 64),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-
-            nn.Linear(64, 32),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-
-            nn.Linear(32, num_classes),
-            nn.Softmax(dim=1)
+            nn.Linear(64, num_classes)
         )
 
     def conv_and_batch_norm_block(self, in_channels, out_channels, pool=False):
@@ -65,13 +55,13 @@ class CIFARClassifier(nn.Module):
 
     def forward(self, x):
         out = self.conv1(x)
-        out = self.conv2(out)
-        out = self.res1(out) + out #skip connections
-        out = self.res2(out) + out #skip connections
+        out1 = self.conv2(out)
+        out = self.res1(out1) + out1  # skip connections
+        out = out1 + self.res2(out) + out  # multi skip connections
         out = self.conv3(out)
-        out = self.conv4(out)
-        out = self.res3(out) + out #skip connections
-        out = self.res4(out) + out #skip connections
+        out2 = self.conv4(out)
+        out = self.res3(out2) + out2  # skip connections
+        out = out2 + self.res4(out) + out  # multi skip connections
         out = self.classifier(out)
         return out
 

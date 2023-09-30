@@ -2,28 +2,39 @@ import random
 import torch
 import torchvision
 from torchvision import transforms
-from torch.utils.data import DataLoader, Subset, random_split
+from torch.utils.data import DataLoader, Subset, random_split, ConcatDataset
 
 
 def create_train_data_loader(batch_size=32):
+    # normal dataset
+    stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    normal_transforms = [
+        transforms.ToTensor(),  # Convert images to tensors
+        transforms.Normalize(*stats, inplace=True)  # Normalize pixel values
+    ]
+    train_dataset = torchvision.datasets.CIFAR10(root='./data', download=True, train=True,
+                                                 transform=transforms.Compose(normal_transforms))
+
+    # augmenting dataset
     stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     transforms_to_apply = [
         transforms.RandomCrop(32, padding=4, padding_mode='reflect'),
         transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
-        transforms.RandomRotation(10),  # Randomly rotate images by up to 15 degrees
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
+        transforms.RandomRotation(7),  # Randomly rotate images by up to 7 degrees
         # Randomly adjust brightness, contrast, saturation, and hue
         transforms.ToTensor(),  # Convert images to tensors
         transforms.Normalize(*stats, inplace=True)  # Normalize pixel values
     ]
-    transform_train = transforms.Compose(transforms_to_apply)
-
     train_dataset_with_augmentation = torchvision.datasets.CIFAR10(root='./data', download=True, train=True,
-                                                                   transform=transform_train)
-    return DataLoader(train_dataset_with_augmentation, batch_size=batch_size, shuffle=True, num_workers=2)
+                                                                   transform=transforms.Compose(transforms_to_apply))
+
+    # Combine the datasets using ConcatDataset
+    combined_dataset = ConcatDataset([train_dataset, train_dataset_with_augmentation])
+
+    return DataLoader(combined_dataset, batch_size=batch_size, shuffle=True)
 
 
-def create_test_and_validation_data_loader(batch_size=32, validation_split=0.2):
+def create_test_and_validation_data_loader(batch_size=32, validation_split=0.15):
     stats = ((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     transform_test = transforms.Compose([
         transforms.ToTensor(),
@@ -55,9 +66,7 @@ def create_train_data_loader_with_num_instances(num_instances, batch_size=32):
     transforms_to_apply = [
         transforms.RandomCrop(32, padding=4, padding_mode='reflect'),
         transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
-        transforms.RandomRotation(10),  # Randomly rotate images by up to 15 degrees
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-        # Randomly adjust brightness, contrast, saturation, and hue
+        transforms.RandomRotation(7),  # Randomly rotate images by up to 7 degrees
         transforms.ToTensor(),  # Convert images to tensors
         transforms.Normalize(*stats, inplace=True)  # Normalize pixel values
     ]

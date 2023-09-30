@@ -51,7 +51,7 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
     torch.cuda.empty_cache()
 
     # Initialize the GradScaler for mixed precision training
-    scaler = GradScaler()
+    # scaler = GradScaler()
 
     # Things we are keeping track of
     start_epoch = 0
@@ -99,36 +99,40 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
                                   position=1, leave=False, dynamic_ncols=True, ncols=100, colour='green')
 
         for batch_idx, data in enumerate(train_loader):
-            # boilerplate
-            optimizer.zero_grad()
-
             # get the data and outputs
             images, labels = data
             images = images.to(device)
             labels = labels.to(device)
 
             # dummy init
-            outputs = None
-            loss = None
+            # outputs = None
+            # loss = None
+            #
+            # # # Wrap the forward pass and loss computation with autocast
+            # with autocast():
+            #     outputs = model(images)
+            #     loss = criterion(outputs, labels)
 
-            # Wrap the forward pass and loss computation with autocast
-            with autocast():
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-
+            outputs = model(images)
             loss = criterion(outputs, labels)
+            loss.backward()
 
             # training loss update (Multi precision training for faster training)
-            scaler.scale(loss).backward()
+            # scaler.scale(loss).backward()
 
             # Gradient clipping
             nn.utils.clip_grad_value_(model.parameters(), params['grad_clip'])
 
-            #update optimizer but using GradientScaler mixed precision training
-            scaler.step(optimizer)
-            scaler.update()
+            # update optimizer but using GradientScaler mixed precision training
+            # scaler.step(optimizer)
+            # scaler.update()
 
-            #scheduler update
+            optimizer.step()
+            optimizer.zero_grad()
+
+            # print(f"Curr LR -> {optimizer.param_groups[0]['lr']}")
+
+            # scheduler update
             sched.step()
 
             epoch_training_loss += loss.item()
@@ -212,28 +216,28 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
 
 
 # %%
-if __name__ == '__main__':
-    params = {
-        'batch_size': 32,
-        'learning_rate': 0.0045,
-        'save_dir': 'model_ckpts'
-    }
-    train_data_loader = create_train_data_loader(32)
-    test_data_loader, validation_data_loader = create_test_and_validation_data_loader(32)
-
-    full_experiment = "Full Data"
-    # Check if GPU is available, otherwise use CPU
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    full_cifar_model = CIFARClassifier()
-    full_cifar_model.to(device)
-
-    train_model(
-        full_cifar_model,
-        train_data_loader,
-        validation_data_loader,
-        2,
-        params,
-        full_experiment,
-        epoch_saver_count=1,
-        resume_checkpoint=None
-    )
+# if __name__ == '__main__':
+#     params = {
+#         'batch_size': 32,
+#         'learning_rate': 0.0045,
+#         'save_dir': 'model_ckpts'
+#     }
+#     train_data_loader = create_train_data_loader(32)
+#     test_data_loader, validation_data_loader = create_test_and_validation_data_loader(32)
+#
+#     full_experiment = "Full Data"
+#     # Check if GPU is available, otherwise use CPU
+#     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#     full_cifar_model = CIFARClassifier()
+#     full_cifar_model.to(device)
+#
+#     train_model(
+#         full_cifar_model,
+#         train_data_loader,
+#         validation_data_loader,
+#         2,
+#         params,
+#         full_experiment,
+#         epoch_saver_count=1,
+#         resume_checkpoint=None
+#     )
