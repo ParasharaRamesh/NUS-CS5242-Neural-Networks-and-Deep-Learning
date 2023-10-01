@@ -67,7 +67,8 @@ def show_predictions(model, test_data_loader, num_samples=5):
 
             # Forward pass through the model
             predicted_logits = model(sample_data)
-            predicted_label = torch.argmax(predicted_logits, dim=1).item()
+            predicted_label_probs = nn.Softmax(dim=1)(predicted_logits)
+            predicted_label = torch.argmax(predicted_label_probs, dim=1).item()
 
             # Determine title color based on correctness of prediction
             if predicted_label == true_label:
@@ -85,7 +86,7 @@ def show_predictions(model, test_data_loader, num_samples=5):
     plt.show()
 
 # if __name__ == '__main__':
-#     checkpoint = os.path.join("model_ckpts", "full", "model_epoch_2.pt")
+#     checkpoint = os.path.join("model_ckpts", "full", "model_epoch_26.pt")
 #     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 #     model = CIFARClassifier()
 #     model.to(device)

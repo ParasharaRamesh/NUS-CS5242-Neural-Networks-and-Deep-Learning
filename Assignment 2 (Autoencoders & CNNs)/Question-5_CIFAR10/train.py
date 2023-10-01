@@ -50,9 +50,6 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.cuda.empty_cache()
 
-    # Initialize the GradScaler for mixed precision training
-    # scaler = GradScaler()
-
     # Things we are keeping track of
     start_epoch = 0
     epoch_numbers = []
@@ -104,28 +101,12 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
             images = images.to(device)
             labels = labels.to(device)
 
-            # dummy init
-            # outputs = None
-            # loss = None
-            #
-            # # # Wrap the forward pass and loss computation with autocast
-            # with autocast():
-            #     outputs = model(images)
-            #     loss = criterion(outputs, labels)
-
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+            output_logits = model(images)
+            loss = criterion(output_logits, labels)
             loss.backward()
-
-            # training loss update (Multi precision training for faster training)
-            # scaler.scale(loss).backward()
 
             # Gradient clipping
             nn.utils.clip_grad_value_(model.parameters(), params['grad_clip'])
-
-            # update optimizer but using GradientScaler mixed precision training
-            # scaler.step(optimizer)
-            # scaler.update()
 
             optimizer.step()
             optimizer.zero_grad()
@@ -139,12 +120,13 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
 
             # batch stats
             # Compute training accuracy for this batch
-            predicted = torch.argmax(outputs.data, 1)
+            output_probs = nn.Softmax(dim=1)(output_logits)
+            predicted = torch.argmax(output_probs, 1)
             batch_correct_predictions = (predicted == labels).sum().item()
             batch_size = labels.size(0)
 
-            total_samples += batch_size  # batch size basically
             train_correct_predictions += batch_correct_predictions
+            total_samples += batch_size  # batch size basically
 
             # Update the epoch progress bar (overwrite in place)
             epoch_progress_bar.set_postfix({

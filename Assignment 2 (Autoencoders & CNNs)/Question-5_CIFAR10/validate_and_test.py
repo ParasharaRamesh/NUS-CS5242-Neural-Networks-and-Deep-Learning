@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 
 
 def perform_validation(criterion, device, model, val_loader):
@@ -11,13 +12,14 @@ def perform_validation(criterion, device, model, val_loader):
             val_images, val_labels = val_data
             val_images = val_images.to(device)
             val_labels = val_labels.to(device)
-            val_outputs = model(val_images)
+            val_logits = model(val_images)
 
             # Validation loss update
-            val_loss += criterion(val_outputs, val_labels).item()
+            val_loss += criterion(val_logits, val_labels).item()
 
             # Compute validation accuracy for this batch
-            val_predicted = torch.argmax(val_outputs.data, 1)
+            val_probs = nn.Softmax(dim=1)(val_logits)
+            val_predicted = torch.argmax(val_probs, dim=1)
             total_val_samples += val_labels.size(0)
             val_correct_predictions += (val_predicted == val_labels).sum().item()
 
@@ -38,13 +40,14 @@ def perform_test(criterion, device, model, test_loader):
             test_images, test_labels = val_data
             test_images = test_images.to(device)
             test_labels = test_labels.to(device)
-            val_outputs = model(test_images)
+            test_logits = model(test_images)
 
             # Validation loss update
-            test_loss += criterion(val_outputs, test_labels).item()
+            test_loss += criterion(test_logits, test_labels).item()
 
             # Compute validation accuracy for this batch
-            test_predicted = torch.argmax(val_outputs.data, 1)
+            test_probs = nn.Softmax(dim=1)(test_logits)
+            test_predicted = torch.argmax(test_probs, 1)
             total_val_samples += test_labels.size(0)
             test_correct_predictions += (test_predicted == test_labels).sum().item()
 
