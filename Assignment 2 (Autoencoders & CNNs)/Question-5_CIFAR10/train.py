@@ -20,12 +20,15 @@ def load_checkpointed_model_params(model, optimizer, resume_checkpoint):
     training_accuracy = checkpoint['training_accuracy']
     validation_accuracy = checkpoint['validation_accuracy']
     print(f"Model checkpoint {resume_checkpoint} loaded! Will resume the epochs from number #{start_epoch}")
-    return start_epoch, epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy
+    return model, optimizer, start_epoch, epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy
 
 
 def save_model_checkpoint(experiment, model, optimizer, params, epoch, epoch_numbers, training_losses,
                           validation_losses, training_accuracy, validation_accuracy):
-    # create the directory if it doesnt exist
+    # set the model to train mode so that in case there was a validation before it doesnt impact the saved weights (as we have dropouts!)
+    model.train()
+
+    # create the directory if it doesn't exist
     model_save_directory = os.path.join(params["save_dir"], experiment)
     os.makedirs(model_save_directory, exist_ok=True)
 
@@ -61,23 +64,23 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
     # Adam optimizer
     optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'], weight_decay=params['weight_decay'])
 
+    # loss
+    criterion = nn.CrossEntropyLoss()
+
+    # load checkpoint
+    if resume_checkpoint:
+        model, optimizer, start_epoch, epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy = load_checkpointed_model_params(
+            model,
+            optimizer,
+            resume_checkpoint
+        )
+
     # Set up one-cycle learning rate scheduler
     sched = torch.optim.lr_scheduler.OneCycleLR(
         optimizer, params['learning_rate'],
         epochs=num_epochs,
         steps_per_epoch=len(train_loader)
     )
-
-    # loss
-    criterion = nn.CrossEntropyLoss()
-
-    # load checkpoint
-    if resume_checkpoint:
-        start_epoch, epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy = load_checkpointed_model_params(
-            model,
-            optimizer,
-            resume_checkpoint
-        )
 
     # Custom progress bar for total epochs with color and displaying average epoch loss
     total_progress_bar = tqdm(total=num_epochs, desc=f"Total Epochs", position=0,
@@ -86,7 +89,9 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
 
     # training loop
     for epoch in range(start_epoch, start_epoch + num_epochs):
+        #set to train mode
         model.train()
+
         epoch_training_loss = 0.0
         train_correct_predictions = 0
         total_samples = 0
@@ -165,7 +170,7 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
 
         )
 
-        #Close the tqdm bat
+        # Close the tqdm bat
         total_progress_bar.update(1)
 
         # Print state
@@ -195,7 +200,6 @@ def train_model(model, train_loader, val_loader, num_epochs, params, experiment,
 
     # Return things needed for plotting
     return epoch_numbers, training_losses, training_accuracy, validation_losses, validation_accuracy
-
 
 # %%
 # if __name__ == '__main__':

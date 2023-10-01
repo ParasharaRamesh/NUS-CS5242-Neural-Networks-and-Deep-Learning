@@ -3,10 +3,13 @@ import torch.nn as nn
 
 
 def perform_validation(criterion, device, model, val_loader):
-    model.eval()
     val_loss = 0.0
     val_correct_predictions = 0
     total_val_samples = 0
+
+    #set to eval mode
+    model.eval()
+
     with torch.no_grad():
         for val_batch_idx, val_data in enumerate(val_loader):
             val_images, val_labels = val_data
@@ -31,10 +34,13 @@ def perform_validation(criterion, device, model, val_loader):
 
 
 def perform_test(criterion, device, model, test_loader):
-    model.eval()
     test_loss = 0.0
     test_correct_predictions = 0
     total_val_samples = 0
+
+    #set to eval mode
+    model.eval()
+
     with torch.no_grad():
         for val_batch_idx, val_data in enumerate(test_loader):
             test_images, test_labels = val_data
