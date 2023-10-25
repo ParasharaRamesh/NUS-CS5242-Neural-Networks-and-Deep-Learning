@@ -1,0 +1,48 @@
+1. Dataloaders
+
+- Take the dataset and do  (Batch=2 (or) 4, Bag=10, Channel=3, Width=32, Height=32) -> num steps in 1 epoch (either 2k or 1k)
+- find out the normalization constants by running that script and store it
+- augmentation (flips, rotations)
+- One UCC dataloader batch should return the following 3 things:
+    1. (Bag, Channel,Width, Height) Images [Note: need to transpose as we have 32,32,3 instead of 3,32,32]
+    2. (n=4) -> UCC label (length 4 only because thats the confusion matrix there in the original paper) {only upto ucc4 is actually needed}
+    3. (N=10) -> RCC label (counts of each class)
+- One PureClassDataloader
+    1. from the original dataset split it into 10 different "pure" datasets based on the class
+    2. On each "Pure" dataset return all batches with the same image (B=2, b, C, W, H) ( which will be based through the autoencoder.encoder -> KDE)
+
+2. Models
+- Note better to keep the KDE layer as a separate one! ( or atleast keep a track of it in the forward method )
+- UCC model:
+* implement that model and also ensure that the values assigned for the loss value (alpha value is indicative of what I want to optimize) more.
+* Autoencoder + UCC loss
+
+- UCC + RCC model:
+* Autoencoder + UCC loss + RCC loss + UCC-RCC loss
+* This UCC-RCC loss is like threshold the RCC vector and see if the no of things which are greater than 1 is equal to the UCC ka argmax
+
+3. Trainers
+- use the same hooks and stuff
+- UCC model:
+* track ucc accuracy- loss, autoencoder-loss, combined loss after epoch. do one batch of ucc reconstruction
+- UCC-RCC model:
+* do SSIM loss + RCC path + the new loss(es)
+
+4. Autoencoder predictions for each class
+* Looks like we need both the features ka mean and the distribution of features?
+- Use the pure dataloader and the trained encoder model and get all the features (2 paths from here)
+
+* Path 1 (JS Divergence):
+- Use features and also pass it through the KDE layer and get the tensor of KDE values for all images in one class store it
+- Actually also store the features also seperately!
+- Use this entire thing to calculate the JS divergence between 2 things (most probably no need to take the average here? probably better to do it this way only !)
+- Create confusion matrix and pick the min
+
+* Path 2 ( Clustering):
+- Use the stored features along with its corresponding labels and then do kmeans on top of it ( do it the same way done by the original authors)
+- store the score metrics calculated by the original authors ( see cluster.py) and store those values (remember the GT cluster labels)
+- run clustering and then obtain the predicted cluster labels..( see obtain_cluster_results)
+* but how to ensure that the cluster labels here are indeed the same GT labels?
+- calculate cluster accuracy -> do some linear_sum_assignment problem ( i.e. match the cluster labels) by creating a matrix of costs ( true label, predicted label) [exactly recreate this !]
+
+
