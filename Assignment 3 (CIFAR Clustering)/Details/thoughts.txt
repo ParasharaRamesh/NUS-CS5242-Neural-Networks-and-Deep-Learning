@@ -4,6 +4,9 @@
 - find out the normalization constants by running that script and store it
 - augmentation (flips, rotations)
 - One UCC dataloader batch should return the following 3 things:
+    * This means we first randomly pick 1-> 4 from UCC...
+    * Then we randomly pick those classes
+    * Then from that we generate one batch.
     1. (Bag, Channel,Width, Height) Images [Note: need to transpose as we have 32,32,3 instead of 3,32,32]
     2. (n=4) -> UCC label (length 4 only because thats the confusion matrix there in the original paper) {only upto ucc4 is actually needed}
     3. (N=10) -> RCC label (counts of each class)
