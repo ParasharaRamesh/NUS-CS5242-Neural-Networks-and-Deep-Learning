@@ -66,10 +66,10 @@ class Keras_Model(object):
 		output_list = list()
 		ae_output_list = list()
 		#In our case num_instances is 10 ( i.e 10 images in a bag!)
-		for i in range(num_instances): #Num instances is just 2 !!? WTH is this??
+		for i in range(num_instances):
 			temp_input = Input(shape=(patch_size, patch_size, 1))
-			temp_output = self._patch_model(temp_input) #Shape is (10) ( In our case it will be the number of latent features L)
-			temp_output = Reshape((1,-1))(temp_output) # shape is (1,10) ( In our case it will be the number of latent features (1,L))
+			temp_output = self._patch_model(temp_input) #Shape is (10) ( In our case it will be the number of latent features J)
+			temp_output = Reshape((1,-1))(temp_output) # shape is (10,1,1) ( In our case it will be the number of latent features (J,1,1))
 			# print('temp_output shape:{}'.format(K.int_shape(temp_output)))
 
 			temp_ae_output = self._autoencoder_model(temp_input)
@@ -80,16 +80,10 @@ class Keras_Model(object):
 			ae_output_list.append(temp_ae_output)
 
 		'''
-		output_list is of shape (num_instances, 1, num_features) -> (2,1,10) (or rather 2 elements each of shape (1,10) -> (Bag,1,J)
+		output_list is of shape (num_instances, num_features,1,1) -> (Bag,J,1,1)
 		'''
+		concatenated = layers.concatenate(output_list,axis=1) # shape (J, Bag, 1)
 
-		'''
-		output_list (Bag,1,J) -> [(1,J),....] {bag no of times}
-		'''
-		concatenated = layers.concatenate(output_list,axis=1) # shape  (1,J*Bag) ( J is 10 , bag is 2 from terminal example!)
-		'''
-		concatenated should be of shape (1,20) -> (1, 10* num_instances) or rather (1, num_features* num_instances)
-		'''
 		print('concatenated shape:{}'.format(K.int_shape(concatenated)))
 
 		ae_concatenated = layers.concatenate(ae_output_list,axis=1)
@@ -124,12 +118,14 @@ class Keras_Model(object):
 		return self._classification_model.to_yaml()
 
 	'''
-	(1, J*Bag)
+	data: (J, Bag, 1) {concatenate shape from before}
+	
+	but in the code it looks like only if data is (1, Bag, J) it will work out!
 		
 	num_nodes = 11 ( num_classes +1)
 	sigma = 0.1
 	batch_size = 512!!
-	num_features = J (In the case of mnist it is 10)
+	num_features = J (In the case of mnist it is 10, but in our autoencoder it can be whatever we decide)
 	'''
 	def kde(self, data, num_nodes=None, sigma=None, batch_size=None, num_features=None):
 		# print('kde data shape:{}'.format(K.int_shape(data)))
@@ -137,46 +133,44 @@ class Keras_Model(object):
 		# print('sigma:{}'.format(sigma))
 
 		linspace = np.linspace(0, 1, num=num_nodes) # 11 points between 0,1 [0,.........,1] (11)
-		data_ = [batch_size, K.int_shape(data)[1], 1] #shape (B, J*Bag, 1)
-		tile = np.tile(linspace, data_) # shape (B, J*Bag, 1*11)
-		k_sample_points = K.constant(tile) # shape (B, J*Bag, 1*11)
-		# print('kde k_sample_points shape:{}'.format(K.int_shape(k_sample_points)))
+		data_ = [batch_size, K.int_shape(data)[1], 1] #shape (B, Bag, 1)
+		tile = np.tile(linspace, data_) # shape (B, Bag, num_nodes)
+		k_sample_points = K.constant(tile) # shape (B, Bag, num_nodes)
 
 		k_alfa = K.constant(1/np.sqrt(2*np.pi*np.square(sigma))) #alpha
 		k_beta = K.constant(-1/(2*np.square(sigma))) #beta
 
 		out_list = list()
+		#data initially is (J, Bag, 1) -> lets say it becomes (1,Bag,J) {no code here which does that but otherwise the codebelow wont work}
 		for i in range(num_features): #J
-			# shape (B, J*Bag, 1) -> (B, Bag, J) ( lets assume its this!)
-			i_ = data[:, :, i] # with the assuumption shape (B, Bag) -> jth feature of the Bag of batch no B
+			i_ = data[:, :, i] # shape (1,Bag)
 			shape_data_ = (-1, K.int_shape(data)[1], 1)
-			temp_data = K.reshape(i_, shape_data_) #figure it out from the next line!
+			temp_data = K.reshape(i_, shape_data_) # shape (1,Bag, 1)
 			# print('temp_data shape:{}'.format(K.int_shape(temp_data)))
 
-			k_diff = k_sample_points - K.tile(temp_data,[1,1,num_nodes]) #(B, J*Bag, 1*11) - (B, J* Bag, 1*11)
-			k_diff_2 = K.square(k_diff) #(B, J*Bag, 1*11)
+			k_diff = k_sample_points - K.tile(temp_data,[1,1,num_nodes]) #(B, Bag, num_nodes) - (B, Bag, num_nodes)
+			k_diff_2 = K.square(k_diff) #(B, Bag, num_nodes)
 			# print('k_diff_2 shape:{}'.format(K.int_shape(k_diff_2)))
 
-			k_result = k_alfa * K.exp(k_beta*k_diff_2) #(B, J*Bag, 1*11)
+			k_result = k_alfa * K.exp(k_beta*k_diff_2) #(B, Bag, num_nodes)
 
-			k_out_unnormalized = K.sum(k_result,axis=1) #(B, J*Bag, 1*11) -> (B, 1*11)
+			k_out_unnormalized = K.sum(k_result,axis=1) #(B, Bag, num_nodes) -> (B, num_nodes)
 
-			k_sum = K.sum(k_out_unnormalized, axis=1)#(B, 1*11) -> (B)
+			k_sum = K.sum(k_out_unnormalized, axis=1)#(B, num_nodes) -> (B)
 			k_norm_coeff = K.reshape(k_sum, (-1, 1)) # (B,1)
 
-			unnormalized_ = [1, K.int_shape(k_out_unnormalized)[1]] # [1, 1*11]
-			k_tile = K.tile(k_norm_coeff, unnormalized_) #(B, 11)
-			k_out = k_out_unnormalized / k_tile #(B,11)
+			unnormalized_ = [1, K.int_shape(k_out_unnormalized)[1]] # [1, num_nodes]
+			k_tile = K.tile(k_norm_coeff, unnormalized_) #(B, num_nodes)
+			k_out = k_out_unnormalized / k_tile #(B,num_nodes)
 			# print('k_out shape:{}'.format(K.int_shape(k_out)))
 
 			out_list.append(k_out)
 
 		'''
-		out_list : [(B,11),.....J times] -> (J, B, 11)
+		out_list : [(B,num_nodes),.....J times] -> (J, B, num_nodes)
 		'''
-		concat_out = K.concatenate(out_list,axis=-1) # shape here (B, J*11)
-		# print('concat_out shape:{}'.format(K.int_shape(concat_out)))
-		
+		concat_out = K.concatenate(out_list,axis=-1) # shape here (B, J*num_nodes)
+
 		return concat_out
 
 

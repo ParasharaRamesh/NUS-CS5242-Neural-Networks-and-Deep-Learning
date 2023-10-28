@@ -3,67 +3,70 @@ import torch.nn as nn
 from torchinfo import summary
 import numpy as np
 
-#KDE layer
+
+# KDE layer
 class KernelDensityEstimator(nn.Module):
-    def __init__(self, device, num_nodes=11, sigma=0.1, num_features=10):
+    def __init__(self, device, num_nodes=11, sigma=0.1):
         super(KernelDensityEstimator, self).__init__()
         self.num_nodes = num_nodes
         self.sigma = sigma
-        self.num_features = num_features
         self.device = device
 
-    '''
-    TODO.x (batch, 10, J) -> KDE -> (batch, J*num_nodes)
-    '''
     def forward(self, data):
-        batch_size, num_samples, num_features = data.size()
+        batch_size, bag_size, num_features = data.size() #Batch, bag, J
 
         # Create a tensor for the sample points
-        k_sample_points = torch.linspace(0, 1, steps=self.num_nodes).repeat(batch_size, num_samples, 1).to(self.device)
+        k_sample_points = torch.linspace(0, 1, steps=self.num_nodes).repeat(batch_size, bag_size, 1).to(
+            self.device) #B, bag, num_nodes
 
         # Constants
         k_alfa = 1 / np.sqrt(2 * np.pi * np.square(self.sigma))
         k_beta = -1 / (2 * self.sigma ** 2)
 
         out_list = []
-        for i in range(self.num_features):
-            temp_data = data[:, :, i].view(batch_size, num_samples, 1)
 
-            k_diff = k_sample_points - temp_data.expand(-1, -1, self.num_nodes)
-            k_diff_2 = torch.square(k_diff)
-            k_result = k_alfa * torch.exp(k_beta * k_diff_2)
-            k_out_unnormalized = torch.sum(k_result, dim=1)
-            k_norm_coeff = k_out_unnormalized.sum(dim=1).view(batch_size, 1)
-            k_out = k_out_unnormalized / k_norm_coeff.expand(-1, k_out_unnormalized.size(1))
+        for j in range(num_features):
+            data_j = data[:,:,j] #shape (Batch, bag)
+            temp_data = data_j.view(-1, bag_size, 1) #shape (Batch, bag, 1)
+            temp_data = temp_data.expand(-1, -1, self.num_nodes) #shape ( Batch, bag, num_nodes)
+
+            k_diff = k_sample_points - temp_data #shape ( Batch, bag, num_nodes)
+            k_diff_2 = torch.square(k_diff) #shape ( Batch, bag, num_nodes)
+            k_result = k_alfa * torch.exp(k_beta * k_diff_2) #shape ( Batch, bag, num_nodes)
+            k_out_unnormalized = torch.sum(k_result, dim=1) #(B, num_nodes)
+            k_norm_coeff = k_out_unnormalized.sum(dim=1).view(batch_size, 1) #(B,1)
+            k_out = k_out_unnormalized / k_norm_coeff.expand(-1, k_out_unnormalized.size(1)) #(B, num_nodes)
+
             out_list.append(k_out)
-        concat_out = torch.cat(out_list, dim=-1)
-        return concat_out #return shape of (batch, 10 * 11)
+        #out_list is of shape (J, B, num_nodes)
+        concat_out = torch.cat(out_list, dim=-1) #shape is (Batch, J*num_nodes)
+        return concat_out  #shape is (Batch, J*num_nodes) -> (1, 8448)
 
 
-#Autoencoder
+# Autoencoder
 class Autoencoder(nn.Module):
     def __init__(self):
         super().__init__()
         # Input size: [batch, 3, 32, 32]
         # Output size: [batch, 3, 32, 32]
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 12, 4, stride=2, padding=1),            # [batch, 12, 16, 16]
+            nn.Conv2d(3, 12, 4, stride=2, padding=1),  # [batch, 12, 16, 16]
             nn.ReLU(),
-            nn.Conv2d(12, 24, 4, stride=2, padding=1),           # [batch, 24, 8, 8]
+            nn.Conv2d(12, 24, 4, stride=2, padding=1),  # [batch, 24, 8, 8]
             nn.ReLU(),
-			nn.Conv2d(24, 48, 4, stride=2, padding=1),           # [batch, 48, 4, 4]
+            nn.Conv2d(24, 48, 4, stride=2, padding=1),  # [batch, 48, 4, 4]
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(48*16, 48*16),
+            nn.Linear(48 * 16, 48 * 16),
             nn.ReLU()
         )
 
         self.decoder = nn.Sequential(
-			nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1),  # [batch, 24, 8, 8]
+            nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1),  # [batch, 24, 8, 8]
             nn.ReLU(),
-			nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1),  # [batch, 12, 16, 16]
+            nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1),  # [batch, 12, 16, 16]
             nn.ReLU(),
-            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1),   # [batch, 3, 32, 32]
+            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1),  # [batch, 3, 32, 32]
             nn.Sigmoid(),
         )
 
@@ -74,7 +77,6 @@ class Autoencoder(nn.Module):
         return encoded, decoded
 
 
-
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -82,6 +84,7 @@ if __name__ == '__main__':
     # autoencoder = Autoencoder().to(device)
     # summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
-    #KDE Layer test
+    # KDE Layer test
     kde = KernelDensityEstimator(device).to(device)
-    summary(kde, input_size=(10, 48*16), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    summary(kde, input_size=(10, 48 * 16), device=device, batch_dim=0,
+            col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
