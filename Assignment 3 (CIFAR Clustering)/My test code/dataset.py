@@ -1,3 +1,5 @@
+from functools import reduce
+
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset
@@ -13,9 +15,7 @@ TODO.x:
 
 '''
 TODO.
-1. pick a random ucc {1->4}
 2. using this from {0->9} pick ucc random classes
-3. create a bag of size 10 init
 4. from this pick {ucc} random indices 
 5. from the sub_class_dataset {ucc} pick one random image and fill it at that random index
 6. also fill the corresponding ucc for that
@@ -26,7 +26,7 @@ TODO.
 
 
 class Dataset:
-    def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test):
+    def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test, ucc_limit=4, batch_size=2):
         '''
         Note these are numpy arrays
 
@@ -39,6 +39,8 @@ class Dataset:
         '''
         self.num_classes = 10
         self.bag_size = 10
+        self.ucc_limit = ucc_limit
+        self.batch_size = batch_size
 
         # converting it all into a tensor (it's not yet one hotified)
         self.x_train = torch.from_numpy(x_train)
@@ -53,9 +55,27 @@ class Dataset:
         self.test_sub_datasets = self.create_sub_datasets(self.x_test, self.y_test)
         self.val_sub_datasets = self.create_sub_datasets(self.x_val, self.y_val)
 
-        #test pick random image
-        chumma = self.pick_random_from_ith_sub_dataset(self.train_sub_datasets, 4)
-        print("done")
+        #create dataloaders
+        self.ucc_train_dataloader, self.ucc_test_dataloader, self.ucc_val_dataloader = self.get_dataloaders_for_ucc()
+        self.ucc_rcc_train_dataloader, self.ucc_rcc_test_dataloader, self.ucc_rcc_val_dataloader = self.get_dataloaders_for_ucc_and_rcc()
+
+        #TODO.x create a dataloader for the pure images for the autoencoder to get the JS divergence
+
+
+        print("Initilized all dataloaders")
+
+    #create dataloaders
+    def get_dataloaders_for_ucc(self):
+        train_dataset_with_ucc, test_dataset_with_ucc, val_dataset_with_ucc = self.construct_datasets_with_ucc()
+        return DeviceDataLoader(train_dataset_with_ucc, self.batch_size), \
+            DeviceDataLoader(test_dataset_with_ucc, self.batch_size), \
+            DeviceDataLoader(val_dataset_with_ucc, self.batch_size)
+
+    def get_dataloaders_for_ucc_and_rcc(self):
+        train_dataset_with_ucc_and_rcc, test_dataset_with_ucc_and_rcc, val_dataset_with_ucc_and_rcc = self.construct_datasets_with_ucc_and_rcc()
+        return DeviceDataLoader(train_dataset_with_ucc_and_rcc, self.batch_size), \
+            DeviceDataLoader(test_dataset_with_ucc_and_rcc, self.batch_size), \
+            DeviceDataLoader(val_dataset_with_ucc_and_rcc, self.batch_size)
 
     # create sub datasets
     def create_sub_datasets(self, x, y):
@@ -82,83 +102,107 @@ class Dataset:
         assert 0 <= i < self.num_classes
         sub_dataset = sub_datasets[i]
         sub_dataset_length = len(sub_dataset)
-        random_idx = random.randint(0, sub_dataset_length-1)
+        random_idx = random.randint(0, sub_dataset_length - 1)
         return sub_dataset[random_idx][0]
 
-    # get UCC and RCC dataset
+    # construct UCC dataset
     def construct_datasets_with_ucc(self):
-        train_dataset_with_ucc = self.construct_dataset_with_ucc(self.train_loader)
-        val_dataset_with_ucc = self.construct_dataset_with_ucc(self.val_loader)
-        test_dataset_with_ucc = self.construct_dataset_with_ucc(self.test_loader)
+        train_dataset_with_ucc = self.construct_dataset_with_ucc(self.train_sub_datasets)
+        test_dataset_with_ucc = self.construct_dataset_with_ucc(self.test_sub_datasets)
+        val_dataset_with_ucc = self.construct_dataset_with_ucc(self.val_sub_datasets)
 
-        return train_dataset_with_ucc, val_dataset_with_ucc, test_dataset_with_ucc
+        return train_dataset_with_ucc, test_dataset_with_ucc, val_dataset_with_ucc
 
-    # create UCC and RCC dataset
-    def construct_datasets_with_ucc_and_rcc(self):
-        train_dataset_with_ucc_and_rcc = self.construct_dataset_with_ucc_and_rcc(self.train_loader)
-        val_dataset_with_ucc_and_rcc = self.construct_dataset_with_ucc_and_rcc(self.val_loader)
-        test_dataset_with_ucc_and_rcc = self.construct_dataset_with_ucc_and_rcc(self.test_loader)
-
-        return train_dataset_with_ucc_and_rcc, val_dataset_with_ucc_and_rcc, test_dataset_with_ucc_and_rcc
-
-    # aux functions
-    # get ucc
-    def construct_dataset_with_ucc(self, dataloader):
-        image_tensors = []
+    def construct_dataset_with_ucc(self, sub_datasets):
+        bag_tensors = []
         ucc_tensors = []
 
-        for data in tqdm(dataloader):
-            image, label = data
+        # calculate no of bags needed (NOTE: we are not going to pick every image here!)
+        total_bags = 0
+        for sub_dataset in sub_datasets:
+            total_bags += len(sub_dataset)
+        total_bags = total_bags // self.bag_size
+
+        for b in tqdm(range(total_bags)):
+            # this will keep picking ucc (1 -> 4) in a cyclic manner
+            ucc = (b % self.ucc_limit) + 1
+            bag_tensor = [None] * 10
+
+            # you are choosing random classes of size {ucc}. Using this knowledge you have to fill the bag up.
+            chosen_classes = random.sample(list(range(self.num_classes)), ucc)
+            random_bag_pos = random.sample(list(range(self.bag_size)), self.bag_size)
+
+            # fill all the values for ucc first and then fill the remaining with random sampling with replacement
+            for chosen_class, bag_pos in zip(chosen_classes, random_bag_pos[:len(chosen_classes)]):
+                bag_tensor[bag_pos] = self.pick_random_from_ith_sub_dataset(sub_datasets, chosen_class)
+
+            # fill bag_tensor pos by pos
+            for bag_pos in random_bag_pos[len(chosen_classes):]:
+                chosen_class = random.choice(chosen_classes)
+                bag_tensor[bag_pos] = self.pick_random_from_ith_sub_dataset(sub_datasets, chosen_class)
+
+            bag_tensors.append(torch.stack(bag_tensor))
+            ucc_tensors.append(self.one_hot(ucc, self.ucc_limit))
 
         return TensorDataset(
-            torch.stack(image_tensors),
+            torch.stack(bag_tensors),
             torch.stack(ucc_tensors)
         )
 
-    # get both UCC and RCC
-    def construct_dataset_with_ucc_and_rcc(self, dataloader):
-        image_tensors = []
+    # create UCC and RCC dataset
+    def construct_datasets_with_ucc_and_rcc(self):
+        train_dataset_with_ucc_and_rcc = self.construct_dataset_with_ucc_and_rcc(self.train_sub_datasets)
+        test_dataset_with_ucc_and_rcc = self.construct_dataset_with_ucc_and_rcc(self.val_sub_datasets)
+        val_dataset_with_ucc_and_rcc = self.construct_dataset_with_ucc_and_rcc(self.test_sub_datasets)
+
+        return train_dataset_with_ucc_and_rcc, test_dataset_with_ucc_and_rcc, val_dataset_with_ucc_and_rcc
+
+    def construct_dataset_with_ucc_and_rcc(self, sub_datasets):
+        bag_tensors = []
         ucc_tensors = []
         rcc_tensors = []
 
-        for data in tqdm(dataloader):
-            images, labels = data
+        # calculate no of bags needed (NOTE: we are not going to pick every image here!)
+        total_bags = 0
+        for sub_dataset in sub_datasets:
+            total_bags += len(sub_dataset)
+        total_bags = total_bags // self.bag_size
 
-            # get ucc
-            ucc = self.get_ucc_from_labels_of_batch(labels)
+        for b in tqdm(range(total_bags)):
+            # this will keep picking ucc (1 -> 4) in a cyclic manner
+            ucc = (b % self.ucc_limit) + 1
+            bag_tensor = [None] * 10
+            rcc_tensor = [0] * 10
 
-            # get rcc
-            rcc = self.get_rcc_from_labels_of_batch(labels)
+            # you are choosing random classes of size {ucc}. Using this knowledge you have to fill the bag up.
+            chosen_classes = random.sample(list(range(self.num_classes)), ucc)
+            random_bag_pos = random.sample(list(range(self.bag_size)), self.bag_size)
 
-            image_tensors.append(images)
-            ucc_tensors.append(ucc)
-            rcc_tensors.append(rcc)
+            # fill all the values for ucc first and then fill the remaining with random sampling with replacement
+            for chosen_class, bag_pos in zip(chosen_classes, random_bag_pos[:len(chosen_classes)]):
+                bag_tensor[bag_pos] = self.pick_random_from_ith_sub_dataset(sub_datasets, chosen_class)
+                rcc_tensor[chosen_class] += 1
+
+            # fill bag_tensor pos by pos
+            for bag_pos in random_bag_pos[len(chosen_classes):]:
+                chosen_class = random.choice(chosen_classes)
+                bag_tensor[bag_pos] = self.pick_random_from_ith_sub_dataset(sub_datasets, chosen_class)
+                rcc_tensor[chosen_class] += 1
+
+            bag_tensors.append(torch.stack(bag_tensor))
+            ucc_tensors.append(self.one_hot(ucc, self.ucc_limit))
+            rcc_tensors.append(torch.tensor(rcc_tensor))
 
         return TensorDataset(
-            torch.stack(image_tensors),
+            torch.stack(bag_tensors),
             torch.stack(ucc_tensors),
             torch.stack(rcc_tensors),
         )
 
-    # Functions to remove!
-    def get_ucc_from_labels_of_batch(self, labels):
-        unique_count = torch.unique(labels).size(0)
-        unique_count = torch.tensor(unique_count)
-        ucc = self.one_hot(unique_count)
-        return ucc
-
-    def get_rcc_from_labels_of_batch(self, labels):
-        labels = labels.squeeze()
-        rcc = torch.zeros(self.num_classes, dtype=torch.int32)
-        # Count the occurrences of each class
-        for i in range(self.num_classes):
-            rcc[i] = (labels == i).sum()
-        return rcc
-
     # util
-    def one_hot(self, label):
+    def one_hot(self, label, limit):
         # Create a one-hot tensor
-        one_hot = torch.zeros(self.num_classes)
+        one_hot = torch.zeros(limit)
 
         # since each label is in range of [1,10] getting it to a range of [0,9]
         one_hot[label - 1] = 1
@@ -176,4 +220,3 @@ if __name__ == '__main__':
     y_test = splitted_dataset['y_test']
 
     dataset = Dataset(x_train, y_train, x_val, y_val, x_test, y_test)
-    # dataset.construct_datasets_with_ucc_and_rcc()
