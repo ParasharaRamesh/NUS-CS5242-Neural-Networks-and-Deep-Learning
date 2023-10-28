@@ -1,7 +1,7 @@
-1. Dataloaders
+1. Dataloaders [DONE]
 
 - Take the dataset and do  (Batch=2 (or) 4, Bag=10, Channel=3, Width=32, Height=32) -> num steps in 1 epoch (either 2k or 1k)
-- find out the normalization constants by running that script and store it
+- find out the normalization constants by running that script and store it (X)
 - augmentation (flips, rotations)
 - One UCC dataloader batch should return the following 3 things:
     * This means we first randomly pick 1-> 4 from UCC...
