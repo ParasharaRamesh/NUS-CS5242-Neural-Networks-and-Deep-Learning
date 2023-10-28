@@ -19,6 +19,7 @@
 - UCC model:
 * implement that model and also ensure that the values assigned for the loss value (alpha value is indicative of what I want to optimize) more.
 * Autoencoder + UCC loss
+* For autoencoder refer to -> https://github.com/chenjie/PyTorch-CIFAR-10-autoencoder/blob/master/main.py
 
 - UCC + RCC model:
 * Autoencoder + UCC loss + RCC loss + UCC-RCC loss
