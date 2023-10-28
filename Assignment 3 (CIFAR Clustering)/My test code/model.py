@@ -101,6 +101,31 @@ class UCC(nn.Module):
         ucc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 4)
         return ucc_logits
 
+# RCC model
+class RCC(nn.Module):
+    def __init__(self, device, rcc_limit=10):
+        super().__init__()
+        # Input size: [Batch, Bag, 48*16]
+        # Output size: [Batch, 4]
+        self.kde = KDE(device)
+        self.stack = nn.Sequential(
+            nn.MaxPool1d(kernel_size=2, stride=2),  # shape 4224
+            nn.ReLU(),
+            nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
+            nn.ReLU(),
+            nn.Linear(2112, 256),
+            nn.ReLU(),
+            nn.Linear(256, 32),
+            nn.ReLU(),
+            nn.Linear(32, rcc_limit),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
+        rcc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 10)
+        return rcc_logits
+
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -115,6 +140,11 @@ if __name__ == '__main__':
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # UCC layer test
-    ucc = UCC(device).to(device)
-    summary(ucc, input_size=(10, 48 * 16), device=device, batch_dim=0,
+    # ucc = UCC(device).to(device)
+    # summary(ucc, input_size=(10, 48 * 16), device=device, batch_dim=0,
+    #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+
+    # RCC layer test
+    rcc = RCC(device).to(device)
+    summary(rcc, input_size=(10, 48 * 16), device=device, batch_dim=0,
             col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
