@@ -89,6 +89,7 @@ class Keras_Model(object):
 		ae_concatenated = layers.concatenate(ae_output_list,axis=1)
 		print('ae_concatenated shape:{}'.format(K.int_shape(ae_concatenated)))
 
+		#This is where KDE is called!
 		y = layers.Lambda(self.kde, arguments={'num_nodes':num_bins,'sigma':0.1,'batch_size':batch_size, 'num_features':self._num_features})(concatenated)
 		print('y shape:{}'.format(K.int_shape(y)))
 
@@ -141,7 +142,7 @@ class Keras_Model(object):
 		k_beta = K.constant(-1/(2*np.square(sigma))) #beta
 
 		out_list = list()
-		#data initially is (J, Bag, 1) -> lets say it becomes (1,Bag,J) {no code here which does that but otherwise the codebelow wont work}
+		#data is (1,Bag,J)
 		for i in range(num_features): #J
 			i_ = data[:, :, i] # shape (1,Bag)
 			shape_data_ = (-1, K.int_shape(data)[1], 1)
