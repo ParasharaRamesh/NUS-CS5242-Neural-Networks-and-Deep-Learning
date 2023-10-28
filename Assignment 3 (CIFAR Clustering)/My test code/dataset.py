@@ -56,11 +56,9 @@ class Dataset:
         self.val_sub_datasets = self.create_sub_datasets(self.x_val, self.y_val)
 
         #create dataloaders
+        self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, self.batch_size) for test_sub_dataset in self.test_sub_datasets]
         self.ucc_train_dataloader, self.ucc_test_dataloader, self.ucc_val_dataloader = self.get_dataloaders_for_ucc()
         self.ucc_rcc_train_dataloader, self.ucc_rcc_test_dataloader, self.ucc_rcc_val_dataloader = self.get_dataloaders_for_ucc_and_rcc()
-
-        #TODO.x create a dataloader for the pure images for the autoencoder to get the JS divergence
-
 
         print("Initilized all dataloaders")
 
