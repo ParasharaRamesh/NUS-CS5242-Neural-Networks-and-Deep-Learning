@@ -76,13 +76,6 @@ class Autoencoder(nn.Module):
         decoded = self.decoder(reshaped_encoded)
         return encoded, decoded
 
-
-'''
-
-
-'''
-
-
 # UCC model
 class UCC(nn.Module):
     def __init__(self, device, ucc_limit=4):
