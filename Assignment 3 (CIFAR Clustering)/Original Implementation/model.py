@@ -38,6 +38,11 @@ class Keras_Model(object):
 		print('flatten shape:{}'.format(K.int_shape(x0)))
 		patch_output = Dense(self._num_features, activation='sigmoid', use_bias=False, name='fc_sigmoid', **kernel_kwargs)(x0)
 		self._patch_model = Model(inputs=patch_input, outputs=patch_output)
+		'''
+		patch_model : input (28,28,1) -> output (10)
+		
+		but why is this done? DONT TELL ME THAT THESE ARE THE NUMBER OF LATENT FEATURES!!! only 10!!!!
+		'''
 		
 		feature_input = Input((self._num_features,))
 		x1 = Dense(7*7*128, use_bias=True, bias_initializer=Constant(value=0.1), **kernel_kwargs)(feature_input)
@@ -48,18 +53,23 @@ class Keras_Model(object):
 		x1 = Activation('relu')(x1)
 		reconstructed = Conv2D(1, (3, 3), padding='same', bias_initializer=Constant(value=0.1), **kernel_kwargs)(x1)
 		print('reconstructed shape:{}'.format(K.int_shape(reconstructed)))
+		# This is basically the decoder part
 		self._image_generation_model = Model(inputs=feature_input, outputs=reconstructed)
 
 		ae_output = self._image_generation_model(patch_output)
+		'''
+		patch_input and ae_output here are (28,28,1)	
+		'''
 		self._autoencoder_model = Model(inputs=patch_input, outputs=ae_output)
 
 		input_list = list()
 		output_list = list()
 		ae_output_list = list()
-		for i in range(num_instances):
+		#In our case num_instances is 10 ( i.e 10 images in a bag!)
+		for i in range(num_instances): #Num instances is just 2 !!? WTH is this??
 			temp_input = Input(shape=(patch_size, patch_size, 1))
-			temp_output = self._patch_model(temp_input)
-			temp_output = Reshape((1,-1))(temp_output)
+			temp_output = self._patch_model(temp_input) #Shape is (10) ( In our case it will be the number of latent features L)
+			temp_output = Reshape((1,-1))(temp_output) # shape is (1,10) ( In our case it will be the number of latent features (1,L))
 			# print('temp_output shape:{}'.format(K.int_shape(temp_output)))
 
 			temp_ae_output = self._autoencoder_model(temp_input)
@@ -69,8 +79,17 @@ class Keras_Model(object):
 			output_list.append(temp_output)
 			ae_output_list.append(temp_ae_output)
 
+		'''
+		output_list is of shape (num_instances, 1, num_features) -> (2,1,10) (or rather 2 elements each of shape (1,10) -> (Bag,1,J)
+		'''
 
-		concatenated = layers.concatenate(output_list,axis=1)
+		'''
+		output_list (Bag,1,J) -> [(1,J),....] {bag no of times}
+		'''
+		concatenated = layers.concatenate(output_list,axis=1) # shape  (1,J*Bag) ( J is 10 , bag is 2 from terminal example!)
+		'''
+		concatenated should be of shape (1,20) -> (1, 10* num_instances) or rather (1, num_features* num_instances)
+		'''
 		print('concatenated shape:{}'.format(K.int_shape(concatenated)))
 
 		ae_concatenated = layers.concatenate(ae_output_list,axis=1)
@@ -104,39 +123,58 @@ class Keras_Model(object):
 	def yaml_file(self):
 		return self._classification_model.to_yaml()
 
+	'''
+	(1, J*Bag)
+		
+	num_nodes = 11 ( num_classes +1)
+	sigma = 0.1
+	batch_size = 512!!
+	num_features = J (In the case of mnist it is 10)
+	'''
 	def kde(self, data, num_nodes=None, sigma=None, batch_size=None, num_features=None):
 		# print('kde data shape:{}'.format(K.int_shape(data)))
 		# print('num_nodes:{}'.format(num_nodes))
 		# print('sigma:{}'.format(sigma))
 
-		k_sample_points = K.constant( np.tile(np.linspace(0,1,num=num_nodes),[batch_size,K.int_shape(data)[1],1]) )
+		linspace = np.linspace(0, 1, num=num_nodes) # 11 points between 0,1 [0,.........,1] (11)
+		data_ = [batch_size, K.int_shape(data)[1], 1] #shape (B, J*Bag, 1)
+		tile = np.tile(linspace, data_) # shape (B, J*Bag, 1*11)
+		k_sample_points = K.constant(tile) # shape (B, J*Bag, 1*11)
 		# print('kde k_sample_points shape:{}'.format(K.int_shape(k_sample_points)))
 
-		k_alfa = K.constant(1/np.sqrt(2*np.pi*np.square(sigma)))
-		k_beta = K.constant(-1/(2*np.square(sigma)))
+		k_alfa = K.constant(1/np.sqrt(2*np.pi*np.square(sigma))) #alpha
+		k_beta = K.constant(-1/(2*np.square(sigma))) #beta
 
 		out_list = list()
-		for i in range(num_features):
-			temp_data = K.reshape(data[:,:,i],(-1,K.int_shape(data)[1],1))
+		for i in range(num_features): #J
+			# shape (B, J*Bag, 1) -> (B, Bag, J) ( lets assume its this!)
+			i_ = data[:, :, i] # with the assuumption shape (B, Bag) -> jth feature of the Bag of batch no B
+			shape_data_ = (-1, K.int_shape(data)[1], 1)
+			temp_data = K.reshape(i_, shape_data_) #figure it out from the next line!
 			# print('temp_data shape:{}'.format(K.int_shape(temp_data)))
 
-			k_diff = k_sample_points - K.tile(temp_data,[1,1,num_nodes])
-			k_diff_2 = K.square(k_diff)
+			k_diff = k_sample_points - K.tile(temp_data,[1,1,num_nodes]) #(B, J*Bag, 1*11) - (B, J* Bag, 1*11)
+			k_diff_2 = K.square(k_diff) #(B, J*Bag, 1*11)
 			# print('k_diff_2 shape:{}'.format(K.int_shape(k_diff_2)))
 
-			k_result = k_alfa * K.exp(k_beta*k_diff_2)
+			k_result = k_alfa * K.exp(k_beta*k_diff_2) #(B, J*Bag, 1*11)
 
-			k_out_unnormalized = K.sum(k_result,axis=1)
+			k_out_unnormalized = K.sum(k_result,axis=1) #(B, J*Bag, 1*11) -> (B, 1*11)
 
-			k_norm_coeff = K.reshape(K.sum(k_out_unnormalized,axis=1),(-1,1))
+			k_sum = K.sum(k_out_unnormalized, axis=1)#(B, 1*11) -> (B)
+			k_norm_coeff = K.reshape(k_sum, (-1, 1)) # (B,1)
 
-			k_out = k_out_unnormalized / K.tile(k_norm_coeff, [1,K.int_shape(k_out_unnormalized)[1]])
+			unnormalized_ = [1, K.int_shape(k_out_unnormalized)[1]] # [1, 1*11]
+			k_tile = K.tile(k_norm_coeff, unnormalized_) #(B, 11)
+			k_out = k_out_unnormalized / k_tile #(B,11)
 			# print('k_out shape:{}'.format(K.int_shape(k_out)))
 
 			out_list.append(k_out)
 
-
-		concat_out = K.concatenate(out_list,axis=-1)
+		'''
+		out_list : [(B,11),.....J times] -> (J, B, 11)
+		'''
+		concat_out = K.concatenate(out_list,axis=-1) # shape here (B, J*11)
 		# print('concat_out shape:{}'.format(K.int_shape(concat_out)))
 		
 		return concat_out
