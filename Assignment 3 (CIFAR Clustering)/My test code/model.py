@@ -13,7 +13,7 @@ class KernelDensityEstimator(nn.Module):
         self.device = device
 
     '''
-    TODO.x check if the KDE code is correct by checking with the original implementation!
+    TODO.x (batch, 10, J) -> KDE -> (batch, J*num_nodes)
     '''
     def forward(self, data):
         batch_size, num_samples, num_features = data.size()
