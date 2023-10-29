@@ -55,7 +55,6 @@ class UCCTrainer:
               epoch_saver_count=2):
         torch.cuda.empty_cache()
 
-        # TODO.x need to change this
         # initialize the params from the saved checkpoint
         self.init_params_from_checkpoint_hook(load_from_checkpoint, resume_epoch_num)
 
@@ -161,7 +160,6 @@ class UCCTrainer:
             need_to_save_model_checkpoint = (epoch + 1) % epoch_saver_count == 0
             if need_to_save_model_checkpoint:
                 print(f"Going to save model {self.name} @ Epoch:{epoch + 1}")
-                #TODO.x
                 self.save_model_checkpoint_hook(epoch, avg_train_stats, avg_val_stats)
 
             print("-" * 60)
@@ -173,8 +171,36 @@ class UCCTrainer:
         return self.get_current_running_history_state_hook()
 
     # hooks
-    def init_params_from_checkpoint_hook(self, load_from_checkpoint, resume_checkpoint):
-        raise NotImplementedError("Need to implement hook for initializing params from checkpoint")
+    def init_params_from_checkpoint_hook(self, load_from_checkpoint, resume_epoch_num):
+        if load_from_checkpoint:
+            # NOTE: resume_epoch_num can be None here if we want to load from the most recently saved checkpoint!
+            checkpoint_path = self.get_model_checkpoint_path(resume_epoch_num)
+            checkpoint = torch.load(checkpoint_path)
+
+            # load previous state of models
+            self.autoencoder_model.load_state_dict(checkpoint['ae_model_state_dict'])
+            self.ucc_predictor_model.load_state_dict(checkpoint['ucc_model_state_dict'])
+
+            # load previous state of optimizers
+            self.ae_optimizer.load_state_dict(checkpoint['ae_optimizer_state_dict'])
+            self.ucc_optimizer.load_state_dict(checkpoint['ucc_optimizer_state_dict'])
+
+            # Things we are keeping track of
+            self.start_epoch = checkpoint['epoch']
+            self.epoch_numbers = checkpoint['epoch_numbers']
+
+            self.training_losses = checkpoint['training_losses']
+            self.training_ae_losses = checkpoint['training_ae_losses']
+            self.training_ucc_losses = checkpoint['training_ucc_losses']
+            self.training_ucc_accuracies = checkpoint['training_ucc_accuracies']
+
+            self.val_losses = checkpoint['val_losses']
+            self.val_ae_losses = checkpoint['val_ae_losses']
+            self.val_ucc_losses = checkpoint['val_ucc_losses']
+            self.val_ucc_accuracies = checkpoint['val_ucc_accuracies']
+
+            print(f"Model checkpoint for {self.name} is loaded from {checkpoint_path}!")
+
 
     def init_scheduler_hook(self, num_epochs):
         # steps per epoch here is multiplied with bag size as we are doing it at an image level
@@ -285,15 +311,43 @@ class UCCTrainer:
         self.val_losses.append(avg_val_stats["avg_val_loss"])
         self.val_ucc_accuracies.append(avg_val_stats["avg_val_ucc_training_accuracy"])
 
-    def save_model_checkpoint_hook(self, epoch, avg_train_stats, avg_val_stats):
-        raise NotImplementedError("Need to implement this hook to save the model checkpoints")
-
     def get_current_running_history_state_hook(self):
         return self.epoch_numbers, \
             self.training_ae_losses, self.training_ucc_losses, self.training_losses, self.training_ucc_accuracies, \
             self.val_ae_losses, self.val_ucc_losses, self.val_losses, self.val_ucc_accuracies
 
-    # TODO.x check all the functions below this!
+    def save_model_checkpoint_hook(self, epoch, avg_train_stats, avg_val_stats):
+        # set it to train mode to save the weights (but doesn't matter apparently!)
+        self.autoencoder_model.train()
+        self.ucc_predictor_model.train()
+
+        # create the directory if it doesn't exist
+        model_save_directory = os.path.join(self.save_dir, self.name)
+        os.makedirs(model_save_directory, exist_ok=True)
+
+        # Checkpoint the model at the end of each epoch
+        checkpoint_path = os.path.join(model_save_directory, f'model_epoch_{epoch + 1}.pt')
+        torch.save(
+            {
+                'ae_model_state_dict': self.autoencoder_model.state_dict(),
+                'ucc_model_state_dict': self.ucc_predictor_model.state_dict(),
+                'ae_optimizer_state_dict': self.ae_optimizer.state_dict(),
+                'ucc_optimizer_state_dict': self.ucc_optimizer.state_dict(),
+                'epoch': epoch + 1,
+                'epoch_numbers': self.epoch_numbers,
+                'training_losses': self.training_losses,
+                'training_ae_losses': self.training_ae_losses,
+                'training_ucc_losses': self.training_ucc_losses,
+                'training_ucc_accuracies': self.training_ucc_accuracies,
+                'val_losses': self.val_losses,
+                'val_ae_losses': self.val_ae_losses,
+                'val_ucc_losses': self.val_ucc_losses,
+                'val_ucc_accuracies': self.val_ucc_accuracies,
+            },
+            checkpoint_path
+        )
+        print(f"Saved the model checkpoint for experiment {self.name} for epoch {epoch + 1}")
+
     # find the most recent file and return the path
     def get_model_checkpoint_path(self, epoch_num=None):
         directory = os.path.join(self.save_dir, self.name)
@@ -312,6 +366,7 @@ class UCCTrainer:
         else:
             model_file = f"model_epoch_{epoch_num}.pt"
         return os.path.join(directory, model_file)
+
 
     #TODO.x
     def test_model(self):
