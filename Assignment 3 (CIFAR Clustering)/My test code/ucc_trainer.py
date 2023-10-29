@@ -5,8 +5,10 @@ from params import *
 
 
 class UCCTrainer:
-    def __init__(self, name, autoencoder_model, ucc_predictor_model, train_loader, test_loader, val_loader, save_dir,
-                 device=config.device):
+    def __init__(self,
+                 name, autoencoder_model, ucc_predictor_model,
+                 train_loader, test_loader, val_loader,
+                 save_dir, device=config.device):
         self.name = name
         self.save_dir = save_dir
         self.device = device
@@ -20,9 +22,10 @@ class UCCTrainer:
         self.ucc_predictor_model = ucc_predictor_model
 
         # Adam optimizer(s)
-        #TODO.x do we need two optimizers?
-        self.ae_optimizer = optim.Adam(self.autoencoder_model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-        self.ucc_optimizer = optim.Adam(self.ucc_predictor_model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        self.ae_optimizer = optim.Adam(self.autoencoder_model.parameters(), lr=config.learning_rate,
+                                       weight_decay=config.weight_decay)
+        self.ucc_optimizer = optim.Adam(self.ucc_predictor_model.parameters(), lr=config.learning_rate,
+                                        weight_decay=config.weight_decay)
 
     # main train code
     def train(self,
@@ -30,21 +33,12 @@ class UCCTrainer:
               resume_epoch_num=None,
               load_from_checkpoint=False,
               epoch_saver_count=2):
-        '''
-
-        :param num_epochs:
-        :param resume_epoch_num: just the name of the model checkpoint
-        :param load_from_checkpoint: boolean indicating if we need to load from checkpoint or not
-        :param epoch_saver_count:
-        :return:
-        '''
         torch.cuda.empty_cache()
 
-        #TODO.x 1 need to change this
+        # TODO.x 1 need to change this
         # initialize the params from the saved checkpoint
         self.init_params_from_checkpoint_hook(load_from_checkpoint, resume_epoch_num)
 
-        #TODO.x 2 need to change this there might be two optimizers here
         # set up scheduler
         self.init_scheduler_hook(num_epochs)
 
@@ -68,36 +62,39 @@ class UCCTrainer:
                 colour='green'
             )
 
-            #TODO.x 3 set all models to train
-            # set model to train mode
-            self.model.train()
+            # set all models to train mode
+            self.autoencoder_model.train()
+            self.ucc_predictor_model.train()
 
-            #TODO.x 4 get more stuff here
+            # TODO.x 4 get more stuff here
             # set the epoch training loss
             epoch_training_loss = 0.0
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
-                #data is of shape (bag=10,channels=3,height=10,width=10)
-                #TODO.x5 for ae have another loop which goes through image by image in a bag
-                #TODO.x6 for ucc have a bag level loss , maybe make both as functions
+                # data is of shape (bag=10,channels=3,height=10,width=10)
+                # TODO.x5 for ae have another loop which goes through image by image in a bag
+                # TODO.x6 for ucc have a bag level loss , maybe make both as functions
                 loss = self.calculate_loss_hook(data)
                 loss.backward()
 
-                #TODO.x7 do grad clip for both the models
                 # Gradient clipping
-                nn.utils.clip_grad_value_(self.model.parameters(), config.grad_clip)
+                nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
+                nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
 
-                #TODO.x8 do optimizer step and zerograd for both the models
-                self.optimizer.step()
-                self.optimizer.zero_grad()
+                # do optimizer step and zerograd for autoencoder model
+                self.ae_optimizer.step()
+                self.ae_optimizer.zero_grad()
 
-                #TODO.x9 just have a scheduler only for the ucc as I am not sure how to do it for the autoencoder
+                # do optimizer step and zerograd for ucc model
+                self.ucc_optimizer.step()
+                self.ucc_optimizer.zero_grad()
+
                 # scheduler update
-                if self.scheduler:
-                    self.scheduler.step()
+                self.ae_scheduler.step()
+                self.ucc_scheduler.step()
 
-                #TODO.x10 add the cummulative loss here
+                # TODO.x10 add the cummulative loss here
                 # add to epoch loss
                 epoch_training_loss += loss.item()
 
@@ -106,7 +103,7 @@ class UCCTrainer:
                     "loss": loss.item()
                 }
 
-                #TODO.x11 have to calculate things like training accuracy, training loss for all models
+                # TODO.x11 have to calculate things like training accuracy, training loss for all models
                 # e.g. computes things like accuracy
                 batch_stats = self.calculate_train_batch_stats_hook()
 
@@ -126,7 +123,7 @@ class UCCTrainer:
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
 
-            #TODO.x14 there are a lot more things to consider here
+            # TODO.x14 there are a lot more things to consider here
             # Store running history
             self.store_running_history_hook(epoch, avg_train_stats, avg_val_stats)
 
@@ -159,9 +156,17 @@ class UCCTrainer:
         raise NotImplementedError("Need to implement hook for initializing params from checkpoint")
 
     def init_scheduler_hook(self, num_epochs):
-        # optimizer is already defined in the super class constructor at this point
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            self.optimizer,
+        # steps per epoch here is multiplied with bag size as we are doing it at an image level
+        self.ae_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            self.ae_optimizer,
+            config.learning_rate,
+            epochs=num_epochs,
+            steps_per_epoch=len(self.train_loader) * config.bag_size
+        )
+
+        #here we are doing it at a bag level
+        self.ucc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            self.ucc_optimizer,
             config.learning_rate,
             epochs=num_epochs,
             steps_per_epoch=len(self.train_loader)
@@ -193,7 +198,7 @@ class UCCTrainer:
     def get_current_running_history_state_hook(self):
         raise NotImplementedError("Need to implement this hook to return the history after training the model")
 
-    #TODO.x check all the functions below this!
+    # TODO.x check all the functions below this!
     # find the most recent file and return the path
     def get_model_checkpoint_path(self, epoch_num=None):
         directory = os.path.join(self.save_dir, self.name)
