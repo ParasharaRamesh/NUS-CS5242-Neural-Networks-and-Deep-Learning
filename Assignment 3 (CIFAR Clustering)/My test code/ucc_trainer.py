@@ -2,6 +2,7 @@ from torch import nn, optim
 from tqdm.auto import tqdm
 import os
 from params import *
+import matplotlib.pyplot as plt
 
 
 class UCCTrainer:
