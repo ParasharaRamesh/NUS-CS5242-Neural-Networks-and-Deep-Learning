@@ -4,16 +4,22 @@ import os
 from params import *
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
+import torch.nn.functional as F
 
 class UCCTrainer:
     def __init__(self,
                  name, autoencoder_model, ucc_predictor_model,
-                 train_loader, test_loader, val_loader,
-                 save_dir, device=config.device):
+                 dataset, save_dir, device=config.device):
         self.name = name
         self.save_dir = save_dir
         self.device = device
-        self.train_loader, self.test_loader, self.val_loader = train_loader, test_loader, val_loader
+
+        #data
+        self.train_loader = dataset.ucc_train_dataloader
+        self.test_loader = dataset.ucc_test_dataloader
+        self.val_loader = dataset.ucc_val_dataloader
+        self.kde_loaders = dataset.kde_test_dataloaders
+        self.autoencoder_loaders = dataset.autoencoder_test_dataloaders
 
         # create the directory if it doesn't exist!
         os.makedirs(self.save_dir, exist_ok=True)
@@ -508,7 +514,38 @@ class UCCTrainer:
         }
 
     def calculate_min_js_divergence(self):
+        '''
+        TODO.x use the kde loader and pass it through the encoder and the kde and get  the average and calculate js divergence
+
+        '''
         pass
 
     def calculate_clustering_accuracy(self):
+        '''
+        TODO.x here you need to find out how to do clustering accuracy using Kmeans
+
+        '''
         pass
+
+    def js_divergence(self, p, q):
+        """
+        Calculate the Jensen-Shannon Divergence between two probability distributions p and q.
+
+        Args:
+        p (torch.Tensor): Probability distribution p.
+        q (torch.Tensor): Probability distribution q.
+
+        Returns:
+        torch.Tensor: Jensen-Shannon Divergence between p and q.
+        """
+        # Calculate the average distribution 'm'
+        m = 0.5 * (p + q)
+
+        # Calculate the KL Divergence of 'p' and 'q' from 'm'
+        kl_div_p = F.kl_div(p.log(), m, reduction='batchmean')
+        kl_div_q = F.kl_div(q.log(), m, reduction='batchmean')
+
+        # Compute the JS Divergence
+        js_divergence = 0.5 * (kl_div_p + kl_div_q)
+
+        return js_divergence
