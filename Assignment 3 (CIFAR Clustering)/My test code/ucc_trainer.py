@@ -5,7 +5,7 @@ from params import *
 
 
 class UCCTrainer:
-    def __init__(self, name, autoencoder_model, ucc_model, train_loader, test_loader, val_loader, save_dir,
+    def __init__(self, name, autoencoder_model, ucc_predictor_model, train_loader, test_loader, val_loader, save_dir,
                  device=config.device):
         self.name = name
         self.save_dir = save_dir
@@ -17,32 +17,12 @@ class UCCTrainer:
         os.makedirs(os.path.join(self.save_dir, self.name), exist_ok=True)
 
         self.autoencoder_model = autoencoder_model
-        self.ucc_model = ucc_model
+        self.ucc_predictor_model = ucc_predictor_model
 
         # Adam optimizer(s)
         #TODO.x do we need two optimizers?
         self.ae_optimizer = optim.Adam(self.autoencoder_model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-        self.ucc_optimizer = optim.Adam(self.ucc_model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-
-    #TODO.x check all the functions below this!
-    # find the most recent file and return the path
-    def get_model_checkpoint_path(self, epoch_num=None):
-        directory = os.path.join(self.save_dir, self.name)
-        if epoch_num == None:
-            # Get a list of all files in the directory
-            files = os.listdir(directory)
-
-            # Filter out only the files (exclude directories)
-            files = [f for f in files if os.path.isfile(os.path.join(directory, f))]
-
-            # Sort the files by their modification time in descending order (most recent first)
-            files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
-
-            # Get the name of the most recently added file
-            model_file = files[0] if files else None
-        else:
-            model_file = f"model_epoch_{epoch_num}.pt"
-        return os.path.join(directory, model_file)
+        self.ucc_optimizer = optim.Adam(self.ucc_predictor_model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     # main train code
     def train(self,
@@ -60,9 +40,11 @@ class UCCTrainer:
         '''
         torch.cuda.empty_cache()
 
+        #TODO.x 1 need to change this
         # initialize the params from the saved checkpoint
         self.init_params_from_checkpoint_hook(load_from_checkpoint, resume_epoch_num)
 
+        #TODO.x 2 need to change this there might be two optimizers here
         # set up scheduler
         self.init_scheduler_hook(num_epochs)
 
@@ -86,27 +68,36 @@ class UCCTrainer:
                 colour='green'
             )
 
+            #TODO.x 3 set all models to train
             # set model to train mode
             self.model.train()
 
+            #TODO.x 4 get more stuff here
             # set the epoch training loss
             epoch_training_loss = 0.0
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
+                #data is of shape (bag=10,channels=3,height=10,width=10)
+                #TODO.x5 for ae have another loop which goes through image by image in a bag
+                #TODO.x6 for ucc have a bag level loss , maybe make both as functions
                 loss = self.calculate_loss_hook(data)
                 loss.backward()
 
+                #TODO.x7 do grad clip for both the models
                 # Gradient clipping
                 nn.utils.clip_grad_value_(self.model.parameters(), config.grad_clip)
 
+                #TODO.x8 do optimizer step and zerograd for both the models
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
+                #TODO.x9 just have a scheduler only for the ucc as I am not sure how to do it for the autoencoder
                 # scheduler update
                 if self.scheduler:
                     self.scheduler.step()
 
+                #TODO.x10 add the cummulative loss here
                 # add to epoch loss
                 epoch_training_loss += loss.item()
 
@@ -115,6 +106,7 @@ class UCCTrainer:
                     "loss": loss.item()
                 }
 
+                #TODO.x11 have to calculate things like training accuracy, training loss for all models
                 # e.g. computes things like accuracy
                 batch_stats = self.calculate_train_batch_stats_hook()
 
@@ -126,12 +118,15 @@ class UCCTrainer:
             # close the epoch progress bar
             epoch_progress_bar.close()
 
+            # TODO.x12 have to calculate things like training accuracy, training loss for all models
             # calculate average epoch train statistics
             avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss)
 
+            # TODO.x13 have to calculate things like training accuracy, training loss for all models
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
 
+            #TODO.x14 there are a lot more things to consider here
             # Store running history
             self.store_running_history_hook(epoch, avg_train_stats, avg_val_stats)
 
@@ -197,3 +192,23 @@ class UCCTrainer:
 
     def get_current_running_history_state_hook(self):
         raise NotImplementedError("Need to implement this hook to return the history after training the model")
+
+    #TODO.x check all the functions below this!
+    # find the most recent file and return the path
+    def get_model_checkpoint_path(self, epoch_num=None):
+        directory = os.path.join(self.save_dir, self.name)
+        if epoch_num == None:
+            # Get a list of all files in the directory
+            files = os.listdir(directory)
+
+            # Filter out only the files (exclude directories)
+            files = [f for f in files if os.path.isfile(os.path.join(directory, f))]
+
+            # Sort the files by their modification time in descending order (most recent first)
+            files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
+
+            # Get the name of the most recently added file
+            model_file = files[0] if files else None
+        else:
+            model_file = f"model_epoch_{epoch_num}.pt"
+        return os.path.join(directory, model_file)
