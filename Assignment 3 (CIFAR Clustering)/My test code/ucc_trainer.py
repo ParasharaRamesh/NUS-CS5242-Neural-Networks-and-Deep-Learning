@@ -371,3 +371,38 @@ class UCCTrainer:
     #TODO.x
     def test_model(self):
         raise NotImplementedError("Need to implement this hook to return the history after training the model")
+
+    def show_sample_reconstructions(self, dataloader):
+        self.model.eval()
+
+        # Create a subplot grid
+        fig, axes = plt.subplots(1, 2, figsize=(9, 9))
+
+        with torch.no_grad():
+            for val_data in dataloader:
+                sample_image, _ = val_data
+
+                # Forward pass through the model
+                _, predicted_image = self.model(sample_image)
+
+                # squeeze it
+                sample_image = sample_image.squeeze().to("cpu")
+                predicted_image = predicted_image.squeeze().to("cpu")
+
+                #convert to PIL Image
+                sample_image = self.tensor_to_img_transform(sample_image)
+                predicted_image = self.tensor_to_img_transform(predicted_image)
+
+                axes[0].imshow(sample_image)
+                axes[0].set_title(f"Sample Original Image", color='green')
+                axes[0].axis('off')
+
+                axes[1].imshow(predicted_image)
+                axes[1].set_title(f"Sample Reconstructed Image", color='red')
+                axes[1].axis('off')
+
+                #show only one image
+                break
+
+        plt.tight_layout()
+        plt.show()
