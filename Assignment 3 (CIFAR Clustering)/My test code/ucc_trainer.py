@@ -97,7 +97,7 @@ class UCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
-                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(decoded, one_hot_ucc_labels)
+                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(decoded, one_hot_ucc_labels, True)
 
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss
@@ -114,7 +114,7 @@ class UCCTrainer:
                 self.ucc_optimizer.step()
                 self.ucc_optimizer.zero_grad()
 
-                # scheduler update
+                # scheduler update (remove if it doesnt work!)
                 self.ae_scheduler.step()
                 self.ucc_scheduler.step()
 
@@ -140,7 +140,6 @@ class UCCTrainer:
             # calculate average epoch train statistics
             avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss)
 
-            # TODO.x have to calculate things like training accuracy, training batch_loss for all models
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
 
@@ -202,7 +201,6 @@ class UCCTrainer:
 
             print(f"Model checkpoint for {self.name} is loaded from {checkpoint_path}!")
 
-
     def init_scheduler_hook(self, num_epochs):
         # steps per epoch here is multiplied with bag size as we are doing it at an image level
         self.ae_scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -229,10 +227,12 @@ class UCCTrainer:
         ae_loss = self.ae_loss_criterion(decoded, images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
-    def forward_propogate_ucc(self, decoded, one_hot_ucc_labels):
+    def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-        batch_size, bag_size = config.batch_size, config.bag_size
-        decoded = decoded.view(batch_size, bag_size, -1)
+        batch_times_bag_size, feature_size = decoded.size()
+        bag_size = config.bag_size
+        batch_size = batch_times_bag_size // bag_size
+        decoded = decoded.view(batch_size, bag_size, feature_size)
         ucc_logits = self.ucc_predictor_model(decoded)
 
         # compute the ucc_loss
@@ -247,9 +247,12 @@ class UCCTrainer:
 
         # calculate batchwise accuracy/ucc_loss
         batch_ucc_accuracy = batch_correct_predictions / batch_size
-        self.train_correct_predictions += batch_correct_predictions
-        self.train_total_batches += batch_size
-
+        if is_train_mode:
+            self.train_correct_predictions += batch_correct_predictions
+            self.train_total_batches += batch_size
+        else:
+            self.eval_correct_predictions += batch_correct_predictions
+            self.eval_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy
 
     def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss):
@@ -272,7 +275,50 @@ class UCCTrainer:
         return epoch_train_stats
 
     def validation_hook(self):
-        raise NotImplementedError("Need to implement this hook to calculate the validation stats")
+        # class level init
+        self.eval_correct_predictions = 0
+        self.eval_total_batches = 0
+
+        val_loss = 0.0
+        val_ae_loss = 0.0
+        val_ucc_loss = 0.0
+
+        # set all models to eval mode
+        self.autoencoder_model.eval()
+        self.ucc_predictor_model.eval()
+
+        with torch.no_grad():
+            for val_batch_idx, val_data in enumerate(self.val_loader):
+                val_images, val_one_hot_ucc_labels = val_data
+
+                # calculate losses from both models for a batch of bags
+                val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
+                val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_decoded,
+                                                                                        val_one_hot_ucc_labels, False)
+
+                # calculate combined loss
+                val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss
+
+                # cummulate the losses
+                val_ae_loss += val_batch_ae_loss
+                val_ucc_loss += val_batch_ucc_loss
+                val_loss += val_batch_loss
+
+        # Calculate average validation loss for the epoch
+        avg_val_loss = val_loss / len(self.val_loader)
+        avg_val_ucc_loss = val_ucc_loss / len(self.val_loader)
+        avg_val_ae_loss = val_ae_loss / len(self.val_loader)
+        avg_val_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
+
+        # show some sample predictions
+        self.show_sample_reconstructions(self.val_loader)
+
+        return {
+            "avg_val_loss": avg_val_loss,
+            "avg_val_ae_loss": avg_val_ae_loss,
+            "avg_val_ucc_loss": avg_val_ucc_loss,
+            "avg_val_ucc_training_accuracy": avg_val_ucc_training_accuracy
+        }
 
     def calculate_and_print_epoch_stats_hook(self, avg_train_stats, avg_val_stats):
         epoch_loss = avg_train_stats["avg_training_loss"]
@@ -285,8 +331,10 @@ class UCCTrainer:
         epoch_val_ucc_loss = avg_val_stats["avg_val_ucc_loss"]
         epoch_val_ucc_accuracy = avg_val_stats["avg_val_ucc_training_accuracy"]
 
-        print(f"[TRAIN]: Epoch Loss: {epoch_loss} | AE Loss: {epoch_ae_loss} | UCC Loss: {epoch_ucc_loss} | UCC Acc: {epoch_ucc_accuracy}")
-        print(f"[VAL]: Val Loss: {epoch_val_loss} | Val AE Loss: {epoch_val_ae_loss} | Val UCC Loss: {epoch_val_ucc_loss} | Val UCC Acc: {epoch_val_ucc_accuracy}")
+        print(
+            f"[TRAIN]: Epoch Loss: {epoch_loss} | AE Loss: {epoch_ae_loss} | UCC Loss: {epoch_ucc_loss} | UCC Acc: {epoch_ucc_accuracy}")
+        print(
+            f"[VAL]: Val Loss: {epoch_val_loss} | Val AE Loss: {epoch_val_ae_loss} | Val UCC Loss: {epoch_val_ucc_loss} | Val UCC Acc: {epoch_val_ucc_accuracy}")
 
         return {
             "epoch_loss": epoch_loss,
@@ -368,11 +416,11 @@ class UCCTrainer:
             model_file = f"model_epoch_{epoch_num}.pt"
         return os.path.join(directory, model_file)
 
-
-    #TODO.x
+    # TODO.x
     def test_model(self):
         raise NotImplementedError("Need to implement this hook to return the history after training the model")
 
+    #TODO.x do a sample reconstructions
     def show_sample_reconstructions(self, dataloader):
         self.model.eval()
 
@@ -390,7 +438,7 @@ class UCCTrainer:
                 sample_image = sample_image.squeeze().to("cpu")
                 predicted_image = predicted_image.squeeze().to("cpu")
 
-                #convert to PIL Image
+                # convert to PIL Image
                 sample_image = self.tensor_to_img_transform(sample_image)
                 predicted_image = self.tensor_to_img_transform(predicted_image)
 
@@ -402,7 +450,7 @@ class UCCTrainer:
                 axes[1].set_title(f"Sample Reconstructed Image", color='red')
                 axes[1].axis('off')
 
-                #show only one image
+                # show only one image
                 break
 
         plt.tight_layout()
