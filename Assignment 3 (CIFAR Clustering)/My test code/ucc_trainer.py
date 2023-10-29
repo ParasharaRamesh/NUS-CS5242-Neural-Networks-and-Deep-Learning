@@ -55,7 +55,7 @@ class UCCTrainer:
               epoch_saver_count=2):
         torch.cuda.empty_cache()
 
-        # TODO.x 1 need to change this
+        # TODO.x need to change this
         # initialize the params from the saved checkpoint
         self.init_params_from_checkpoint_hook(load_from_checkpoint, resume_epoch_num)
 
@@ -140,7 +140,7 @@ class UCCTrainer:
             # calculate average epoch train statistics
             avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss)
 
-            # TODO.x13 have to calculate things like training accuracy, training batch_loss for all models
+            # TODO.x have to calculate things like training accuracy, training batch_loss for all models
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
 
@@ -161,6 +161,7 @@ class UCCTrainer:
             need_to_save_model_checkpoint = (epoch + 1) % epoch_saver_count == 0
             if need_to_save_model_checkpoint:
                 print(f"Going to save model {self.name} @ Epoch:{epoch + 1}")
+                #TODO.x
                 self.save_model_checkpoint_hook(epoch, avg_train_stats, avg_val_stats)
 
             print("-" * 60)
@@ -246,9 +247,30 @@ class UCCTrainer:
     def validation_hook(self):
         raise NotImplementedError("Need to implement this hook to calculate the validation stats")
 
-    def calculate_and_print_epoch_stats_hook(self):
-        raise NotImplementedError(
-            "Need to implement this hook to calculate and print the epoch statistics and return the postfix dictinoary")
+    def calculate_and_print_epoch_stats_hook(self, avg_train_stats, avg_val_stats):
+        epoch_loss = avg_train_stats["avg_training_loss"]
+        epoch_ae_loss = avg_train_stats["avg_ae_loss"]
+        epoch_ucc_loss = avg_train_stats["avg_ucc_loss"]
+        epoch_ucc_accuracy = avg_train_stats["avg_ucc_training_accuracy"]
+
+        epoch_val_loss = avg_val_stats["avg_val_loss"]
+        epoch_val_ae_loss = avg_val_stats["avg_val_ae_loss"]
+        epoch_val_ucc_loss = avg_val_stats["avg_val_ucc_loss"]
+        epoch_val_ucc_accuracy = avg_val_stats["avg_val_ucc_training_accuracy"]
+
+        print(f"[TRAIN]: Epoch Loss: {epoch_loss} | AE Loss: {epoch_ae_loss} | UCC Loss: {epoch_ucc_loss} | UCC Acc: {epoch_ucc_accuracy}")
+        print(f"[VAL]: Val Loss: {epoch_val_loss} | Val AE Loss: {epoch_val_ae_loss} | Val UCC Loss: {epoch_val_ucc_loss} | Val UCC Acc: {epoch_val_ucc_accuracy}")
+
+        return {
+            "epoch_loss": epoch_loss,
+            "epoch_ae_loss": epoch_ae_loss,
+            "epoch_ucc_loss": epoch_ucc_loss,
+            "epoch_ucc_acc": epoch_ucc_accuracy,
+            "epoch_val_loss": epoch_val_loss,
+            "epoch_val_ae_loss": epoch_val_ae_loss,
+            "epoch_val_ucc_loss": epoch_val_ucc_loss,
+            "epoch_val_ucc_acc": epoch_val_ucc_accuracy
+        }
 
     def store_running_history_hook(self, epoch, avg_train_stats, avg_val_stats):
         self.epoch_numbers.append(epoch + 1)
