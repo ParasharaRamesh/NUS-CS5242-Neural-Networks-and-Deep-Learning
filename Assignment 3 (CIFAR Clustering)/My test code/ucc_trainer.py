@@ -27,6 +27,10 @@ class UCCTrainer:
         self.ucc_optimizer = optim.Adam(self.ucc_predictor_model.parameters(), lr=config.learning_rate,
                                         weight_decay=config.weight_decay)
 
+        #Loss criterion(s)
+        self.ae_loss_criterion = nn.MSELoss()
+        self.ucc_loss_criterion = nn.CrossEntropyLoss()
+
     # main train code
     def train(self,
               num_epochs,
@@ -72,12 +76,9 @@ class UCCTrainer:
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
-                # data is of shape (batchsize=2, bag=10,channels=3,height=10,width=10)
-
-                #TODO.x we have to find the losses here!
-                #calculate losses from both models for a batch of bags
-                ae_loss = self.calculate_autoencoder_loss(data)
-                ucc_loss = self.calculate_ucc_loss(data)
+                # calculate losses from both models for a batch of bags
+                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(data)
+                ucc_loss = self.forward_propogate_ucc(decoded)
 
                 batch_loss = ae_loss + ucc_loss
 
@@ -167,7 +168,7 @@ class UCCTrainer:
             steps_per_epoch=len(self.train_loader) * config.bag_size
         )
 
-        #here we are doing it at a bag level
+        # here we are doing it at a bag level
         self.ucc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.ucc_optimizer,
             config.learning_rate,
@@ -175,8 +176,36 @@ class UCCTrainer:
             steps_per_epoch=len(self.train_loader)
         )
 
-    def calculate_loss_hook(self, data):
-        raise NotImplementedError("Need to implement hook for computing the custom loss value")
+    def forward_propagate_autoencoder(self, data):
+        # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
+        # generally batch size of 16 is good for cifar10 so predicting 20 wont be so bad
+        batch_size, num_samples, num_channels, height, width = data.size()
+        data = data.view(batch_size * num_samples, num_channels, height, width)
+        encoded, decoded = self.autoencoder_model(data) # we are feeding in Batch*bag images of shape (3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, data) # compares (Batch * Bag, 3,32,32)
+        return ae_loss, encoded, decoded
+
+    #TODO.x figure out how to get the labels for each batch here!
+    def forward_propogate_ucc(self, decoded):
+        # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
+        batch_size, bag_size = config.batch_size, config.bag_size
+        decoded = decoded.view(batch_size, bag_size, -1)
+        ucc_logits = self.ucc_predictor_model(decoded)
+
+        # compute the batch stats right here and save it
+        output_probs = nn.Softmax(dim=1)(ucc_logits)
+        predicted = torch.argmax(output_probs, 1)
+        batch_correct_predictions = (predicted == labels).sum().item()
+        batch_size = labels.size(0)
+
+        # TODO. calculate batchwise accuracy/loss
+        # self.batch_accuracy = batch_correct_predictions / batch_size
+        # self.train_correct_predictions += batch_correct_predictions
+        # self.train_total_batches += labels.size(0)
+
+        return loss
+
+        pass
 
     def calculate_train_batch_stats_hook(self):
         raise NotImplementedError("Need to implement this hook for computing the batch statistics like accuracy")
