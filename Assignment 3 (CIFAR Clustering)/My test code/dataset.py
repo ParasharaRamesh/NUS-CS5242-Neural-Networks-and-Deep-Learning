@@ -11,19 +11,10 @@ import random
 
 '''
 TODO.x:
-* Implement another class which gives all instances of each class for doing JS divergance and KDE later on 
-
-'''
-
-'''
-TODO.
-2. using this from {0->9} pick ucc random classes
-4. from this pick {ucc} random indices 
-5. from the sub_class_dataset {ucc} pick one random image and fill it at that random index
-6. also fill the corresponding ucc for that
-7. In the end do some transform and stuff
-8. do it only for 40k
-
+* Implement another class which gives all instances of each class for doing JS divergance 
+* Do the clustering stuff
+* Do the clustering accuracy
+* Do the trainer code
 '''
 
 
@@ -93,14 +84,49 @@ class Dataset:
         self.val_sub_datasets = self.create_sub_datasets(self.x_val, self.y_val)
 
         # create dataloaders
-        self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, self.batch_size)
-                                             for test_sub_dataset in self.test_sub_datasets]
+        print("Creating KDE dataloaders")
+        self.kde_test_dataloaders = self.create_kde_dataloaders(self.test_sub_datasets)
+        print("Created KDE dataloaders, now creating autoencoder dataloaders")
+        self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, self.batch_size) for test_sub_dataset in
+                                             self.test_sub_datasets]
+        print("Created autoencoder dataloaders, now creating ucc dataloaders")
         self.ucc_train_dataloader, self.ucc_test_dataloader, self.ucc_val_dataloader = self.get_dataloaders_for_ucc()
+        print("Created ucc dataloaders, now creating rcc dataloaders")
         self.ucc_rcc_train_dataloader, self.ucc_rcc_test_dataloader, self.ucc_rcc_val_dataloader = self.get_dataloaders_for_ucc_and_rcc()
 
         print("Initilized all dataloaders")
 
     # create dataloaders
+    def create_kde_dataloaders(self, sub_datasets):
+        kde_datasets = []
+
+        for chosen_class, pure_sub_dataset in tqdm(enumerate(sub_datasets)):
+            total_bags_for_pure_subset = len(pure_sub_dataset) // self.bag_size
+            bag_tensors = []
+
+            pure_sub_dataset_idx = 0
+            current_bag = self.create_bag()
+
+            while pure_sub_dataset_idx < len(pure_sub_dataset):
+                # get the image from this pure sub dataset
+                img = pure_sub_dataset[pure_sub_dataset_idx][0].permute((2, 0, 1))
+                bag_idx = pure_sub_dataset_idx % 10
+                current_bag[bag_idx] = img
+
+                if bag_idx == 9:
+                    # the last value has been filled, so add it to the total bags
+                    bag_tensors.append(torch.stack(current_bag))
+
+                    # create a new bag for the next set of bags to be filled
+                    current_bag = self.create_bag()
+                pure_sub_dataset_idx += 1
+
+            kde_datasets.append(TensorDataset(torch.stack(bag_tensors)))
+
+        print("Finished constructing the kde_datasets from the test dataset, now creating dataloaders")
+        kde_data_loaders = [DeviceDataLoader(kde_sub_dataset, self.batch_size) for kde_sub_dataset in kde_datasets]
+        return kde_data_loaders
+
     def get_dataloaders_for_ucc(self):
         train_dataset_with_ucc, test_dataset_with_ucc, val_dataset_with_ucc = self.construct_datasets_with_ucc()
         return DeviceDataLoader(train_dataset_with_ucc, self.batch_size), \
@@ -167,7 +193,7 @@ class Dataset:
         for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
-            bag_tensor = [None] * 10
+            bag_tensor = self.create_bag()
 
             # you are choosing random classes of size {ucc}. Using this knowledge you have to fill the bag up.
             chosen_classes = random.sample(list(range(self.num_classes)), ucc)
@@ -212,7 +238,7 @@ class Dataset:
         for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
-            bag_tensor = [None] * 10
+            bag_tensor = self.create_bag()
             rcc_tensor = [0] * 10
 
             # you are choosing random classes of size {ucc}. Using this knowledge you have to fill the bag up.
@@ -248,6 +274,9 @@ class Dataset:
         # since each label is in range of [1,10] getting it to a range of [0,9]
         one_hot[label - 1] = 1
         return one_hot
+
+    def create_bag(self):
+        return [None] * 10
 
 
 if __name__ == '__main__':
