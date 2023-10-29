@@ -130,28 +130,6 @@ class RCCPredictor(nn.Module):
         return rcc_logits
 
 
-# Combined UCC model
-class UCC(nn.Module):
-    def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
-        super().__init__()
-
-        self.ucc_limit = ucc_limit
-        self.device = device
-
-        self.kde = KDE(self.device)
-        self.autoencoder = Autoencoder()
-        self.ucc_predictor = UCCPredictor()
-
-    '''
-    TODO.x think if the forward method needs how many params?
-    
-    for the autoencoder get the predictions for the entire bag
-    '''
-    def forward(self, x):
-        pass
-
-
-# Combined RCC model
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -166,11 +144,11 @@ if __name__ == '__main__':
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # UCC layer test
-    # ucc = UCC(device).to(device)
-    # summary(ucc, input_size=(10, 48 * 16), device=device, batch_dim=0,
+    # ucc_predictor = UCCPredictor(device).to(device)
+    # summary(ucc_predictor, input_size=(10, 48 * 16), device=device, batch_dim=0,
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # RCC layer test
-    rcc = RCCPredictor(device).to(device)
-    summary(rcc, input_size=(10, 48 * 16), device=device, batch_dim=0,
-            col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    # rcc_predictor = RCCPredictor(device).to(device)
+    # summary(rcc_predictor, input_size=(10, 48 * 16), device=device, batch_dim=0,
+    #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
