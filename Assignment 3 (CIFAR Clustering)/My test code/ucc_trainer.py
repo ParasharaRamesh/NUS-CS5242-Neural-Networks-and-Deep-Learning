@@ -195,20 +195,22 @@ class UCCTrainer:
         decoded = decoded.view(batch_size, bag_size, -1)
         ucc_logits = self.ucc_predictor_model(decoded)
 
+        #compute the ucc_loss
+        ucc_loss = self.ucc_loss_criterion(ucc_logits, one_hot_ucc_labels)
+
         # compute the batch stats right here and save it
-        output_probs = nn.Softmax(dim=1)(ucc_logits)
-        predicted = torch.argmax(output_probs, 1)
+        ucc_probs = nn.Softmax(dim=1)(ucc_logits)
+        predicted = torch.argmax(ucc_probs, 1)
+        labels = torch.argmax(one_hot_ucc_labels, 1)
         batch_correct_predictions = (predicted == labels).sum().item()
         batch_size = labels.size(0)
 
-        # TODO. calculate batchwise accuracy/loss
+        # TODO. calculate batchwise accuracy/ucc_loss
         # self.batch_accuracy = batch_correct_predictions / batch_size
         # self.train_correct_predictions += batch_correct_predictions
         # self.train_total_batches += labels.size(0)
 
-        return loss
-
-        pass
+        return ucc_loss
 
     def calculate_train_batch_stats_hook(self):
         raise NotImplementedError("Need to implement this hook for computing the batch statistics like accuracy")
