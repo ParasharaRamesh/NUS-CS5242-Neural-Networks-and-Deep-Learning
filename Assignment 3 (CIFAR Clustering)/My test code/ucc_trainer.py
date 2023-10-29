@@ -34,10 +34,15 @@ class UCCTrainer:
         # Values which can change based on loaded checkpoint
         self.start_epoch = 0
         self.epoch_numbers = []
+        self.training_ae_losses = []
+        self.training_ucc_losses = []
         self.training_losses = []
-        self.training_accuracies = []
-        self.validation_losses = []
-        self.validation_accuracies = []
+        self.training_ucc_accuracies = []
+
+        self.val_ae_losses = []
+        self.val_ucc_losses = []
+        self.val_losses = []
+        self.val_ucc_accuracies = []
 
         self.train_correct_predictions = 0
         self.train_total_batches = 0
@@ -143,8 +148,8 @@ class UCCTrainer:
             # Store running history
             self.store_running_history_hook(epoch, avg_train_stats, avg_val_stats)
 
-            # Show epoch stats (NOTE: Can clear the batch stats here)
-            print(f"# Epoch {epoch}")
+            # Show epoch stats
+            print(f"# Epoch {epoch + 1}")
             epoch_postfix = self.calculate_and_print_epoch_stats_hook(avg_train_stats, avg_val_stats)
 
             # Update the total progress bar
@@ -224,13 +229,13 @@ class UCCTrainer:
         avg_training_loss_for_epoch = epoch_training_loss / len(self.train_loader)
         avg_ae_loss_for_epoch = epoch_ae_loss / len(self.train_loader)
         avg_ucc_loss_for_epoch = epoch_ucc_loss / len(self.train_loader)
-        avg_training_accuracy = self.train_correct_predictions / self.train_total_batches
+        avg_ucc_training_accuracy = self.train_correct_predictions / self.train_total_batches
 
         epoch_train_stats = {
             "avg_training_loss": avg_training_loss_for_epoch,
             "avg_ae_loss": avg_ae_loss_for_epoch,
             "avg_ucc_loss": avg_ucc_loss_for_epoch,
-            "avg_training_accuracy": avg_training_accuracy
+            "avg_ucc_training_accuracy": avg_ucc_training_accuracy
         }
 
         # reset
@@ -247,7 +252,18 @@ class UCCTrainer:
             "Need to implement this hook to calculate and print the epoch statistics and return the postfix dictinoary")
 
     def store_running_history_hook(self, epoch, avg_train_stats, avg_val_stats):
-        raise NotImplementedError("Need to implement this hook to store the running history of stats for each epoch")
+        self.epoch_numbers.append(epoch + 1)
+
+        self.training_ae_losses.append(avg_train_stats["avg_ae_loss"])
+        self.training_ucc_losses.append(avg_train_stats["avg_ucc_loss"])
+        self.training_losses.append(avg_train_stats["avg_training_loss"])
+        self.training_ucc_accuracies.append(avg_train_stats["avg_ucc_training_accuracy"])
+
+        self.val_ae_losses.append(avg_val_stats["avg_val_ae_loss"])
+        self.val_ucc_losses.append(avg_val_stats["avg_val_ucc_loss"])
+        self.val_losses.append(avg_val_stats["avg_val_loss"])
+        self.val_ucc_accuracies.append(avg_val_stats["avg_val_ucc_training_accuracy"])
+
 
     def save_model_checkpoint_hook(self, epoch, avg_train_stats, avg_val_stats):
         raise NotImplementedError("Need to implement this hook to save the model checkpoints")
