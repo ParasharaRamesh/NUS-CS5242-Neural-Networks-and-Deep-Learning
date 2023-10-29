@@ -2,11 +2,12 @@ import torch
 import torch.nn as nn
 from torchinfo import summary
 import numpy as np
+from params import *
 
 
 # KDE layer
 class KDE(nn.Module):
-    def __init__(self, device, num_nodes=11, sigma=0.1):
+    def __init__(self, device=config.device, num_nodes=config.num_nodes, sigma=config.sigma):
         super(KDE, self).__init__()
         self.num_nodes = num_nodes
         self.sigma = sigma
@@ -76,9 +77,10 @@ class Autoencoder(nn.Module):
         decoded = self.decoder(reshaped_encoded)
         return encoded, decoded
 
-# UCC model
-class UCC(nn.Module):
-    def __init__(self, device, ucc_limit=4):
+
+# UCC Prediction model
+class UCCPredictor(nn.Module):
+    def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
         super().__init__()
         # Input size: [Batch, Bag, 48*16]
         # Output size: [Batch, 4]
@@ -101,9 +103,10 @@ class UCC(nn.Module):
         ucc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 4)
         return ucc_logits
 
-# RCC model
-class RCC(nn.Module):
-    def __init__(self, device, rcc_limit=10):
+
+# RCC Prediction model
+class RCCPredictor(nn.Module):
+    def __init__(self, device=config.device, rcc_limit=config.rcc_limit):
         super().__init__()
         # Input size: [Batch, Bag, 48*16]
         # Output size: [Batch, 4]
@@ -127,6 +130,29 @@ class RCC(nn.Module):
         return rcc_logits
 
 
+# Combined UCC model
+class UCC(nn.Module):
+    def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
+        super().__init__()
+
+        self.ucc_limit = ucc_limit
+        self.device = device
+
+        self.kde = KDE(self.device)
+        self.autoencoder = Autoencoder()
+        self.ucc_predictor = UCCPredictor()
+
+    '''
+    TODO.x think if the forward method needs how many params?
+    
+    for the autoencoder get the predictions for the entire bag
+    '''
+    def forward(self, x):
+        pass
+
+
+# Combined RCC model
+
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -145,6 +171,6 @@ if __name__ == '__main__':
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # RCC layer test
-    rcc = RCC(device).to(device)
+    rcc = RCCPredictor(device).to(device)
     summary(rcc, input_size=(10, 48 * 16), device=device, batch_dim=0,
             col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)

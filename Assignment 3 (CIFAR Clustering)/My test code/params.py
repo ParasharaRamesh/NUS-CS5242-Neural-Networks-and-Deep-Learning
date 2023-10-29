@@ -8,6 +8,9 @@ class Config:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    sigma = 0.1
+    num_nodes = 11
+
     learning_rate = 0.01
     weight_decay = 1e-4
     grad_clip = 0.1
