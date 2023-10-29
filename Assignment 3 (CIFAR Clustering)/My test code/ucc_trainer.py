@@ -42,7 +42,7 @@ class UCCTrainer:
         # set up scheduler
         self.init_scheduler_hook(num_epochs)
 
-        # Custom progress bar for total epochs with color and displaying average epoch loss
+        # Custom progress bar for total epochs with color and displaying average epoch batch_loss
         total_progress_bar = tqdm(
             total=num_epochs, desc=f"Total Epochs", position=0,
             bar_format="{desc}: {percentage}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
@@ -67,16 +67,19 @@ class UCCTrainer:
             self.ucc_predictor_model.train()
 
             # TODO.x 4 get more stuff here
-            # set the epoch training loss
+            # set the epoch training batch_loss
             epoch_training_loss = 0.0
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
-                # data is of shape (bag=10,channels=3,height=10,width=10)
-                # TODO.x5 for ae have another loop which goes through image by image in a bag
-                # TODO.x6 for ucc have a bag level loss , maybe make both as functions
-                loss = self.calculate_loss_hook(data)
-                loss.backward()
+                # data is of shape (batchsize=2, bag=10,channels=3,height=10,width=10)
+
+                #TODO.x we have to find the losses here!
+                #calculate losses from both models for a batch of bags
+                ae_loss = self.calculate_autoencoder_loss(data)
+                ucc_loss = self.calculate_ucc_loss(data)
+
+                batch_loss = ae_loss + ucc_loss
 
                 # Gradient clipping
                 nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
@@ -94,16 +97,16 @@ class UCCTrainer:
                 self.ae_scheduler.step()
                 self.ucc_scheduler.step()
 
-                # TODO.x10 add the cummulative loss here
-                # add to epoch loss
-                epoch_training_loss += loss.item()
+                # TODO.x10 add the cummulative batch_loss here
+                # add to epoch batch_loss
+                epoch_training_loss += batch_loss.item()
 
                 # Update the epoch progress bar (overwrite in place)
                 postfix = {
-                    "loss": loss.item()
+                    "batch_loss": batch_loss.item()
                 }
 
-                # TODO.x11 have to calculate things like training accuracy, training loss for all models
+                # TODO.x11 have to calculate things like training accuracy, training batch_loss for all models
                 # e.g. computes things like accuracy
                 batch_stats = self.calculate_train_batch_stats_hook()
 
@@ -115,11 +118,11 @@ class UCCTrainer:
             # close the epoch progress bar
             epoch_progress_bar.close()
 
-            # TODO.x12 have to calculate things like training accuracy, training loss for all models
+            # TODO.x12 have to calculate things like training accuracy, training batch_loss for all models
             # calculate average epoch train statistics
             avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss)
 
-            # TODO.x13 have to calculate things like training accuracy, training loss for all models
+            # TODO.x13 have to calculate things like training accuracy, training batch_loss for all models
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
 
