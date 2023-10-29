@@ -9,15 +9,6 @@ from device_data_loader import *
 from tqdm import tqdm
 import random
 
-'''
-TODO.x:
-* Implement another class which gives all instances of each class for doing JS divergance 
-* Do the clustering stuff
-* Do the clustering accuracy
-* Do the trainer code
-'''
-
-
 class Dataset:
     def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test, ucc_limit=4, batch_size=2):
         '''
