@@ -4,13 +4,17 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset
 from torchvision import transforms
-
 from device_data_loader import *
 from tqdm import tqdm
 import random
+from params import *
+
 
 class Dataset:
-    def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test, ucc_limit=4, batch_size=2):
+    def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test,
+                 batch_size=config.batch_size, bag_size=config.bag_size,
+                 ucc_limit=config.ucc_limit, rcc_limit=config.rcc_limit
+                 ):
         '''
         Note these are numpy arrays
 
@@ -21,9 +25,10 @@ class Dataset:
         :param x_test:
         :param y_test:
         '''
-        self.num_classes = 10
-        self.bag_size = 10
+        self.num_classes = rcc_limit
+        self.bag_size = bag_size
         self.ucc_limit = ucc_limit
+        self.rcc_limit = rcc_limit
         self.batch_size = batch_size
 
         # transforms to apply
@@ -230,7 +235,7 @@ class Dataset:
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()
-            rcc_tensor = [0] * 10
+            rcc_tensor = [0] * self.rcc_limit
 
             # you are choosing random classes of size {ucc}. Using this knowledge you have to fill the bag up.
             chosen_classes = random.sample(list(range(self.num_classes)), ucc)
