@@ -3,28 +3,13 @@
 - Take the dataset and do  (Batch=2 (or) 4, Bag=10, Channel=3, Width=32, Height=32) -> num steps in 1 epoch (either 2k or 1k)
 - find out the normalization constants by running that script and store it (X)
 - augmentation (flips, rotations)
-- One UCC dataloader batch should return the following 3 things:
-    * This means we first randomly pick 1-> 4 from UCC...
-    * Then we randomly pick those classes
-    * Then from that we generate one batch.
-    1. (Bag, Channel,Width, Height) Images [Note: need to transpose as we have 32,32,3 instead of 3,32,32]
-    2. (n=4) -> UCC label (length 4 only because thats the confusion matrix there in the original paper) {only upto ucc4 is actually needed}
-    3. (N=10) -> RCC label (counts of each class)
-- One PureClassDataloader
-    1. from the original dataset split it into 10 different "pure" datasets based on the class
-    2. On each "Pure" dataset return all batches with the same image (B=2, b, C, W, H) ( which will be based through the autoencoder.encoder -> KDE)
+- also wrote ucc dataloader, rcc dataloader , autoencoder dataloader on test data and the kde test dataloader
 
-2. Models
+2. Models [DONE]
 - Note better to keep the KDE layer as a separate one! ( or atleast keep a track of it in the forward method )
 - UCC model:
-* implement that model and also ensure that the values assigned for the loss value (alpha value is indicative of what I want to optimize) more.
-* Autoencoder + UCC loss
-* For autoencoder refer to -> https://github.com/chenjie/PyTorch-CIFAR-10-autoencoder/blob/master/main.py
-
 - UCC + RCC model:
-* Autoencoder + UCC loss + RCC loss + UCC-RCC loss
-* This UCC-RCC loss is like threshold the RCC vector and see if the no of things which are greater than 1 is equal to the UCC ka argmax
-
+- KDE model
 Thoughts from call :
 (Batch, 10, 3, 32,32)
 
@@ -32,13 +17,17 @@ feature size = J
 (Num nodes here is 11 for some reason , maybe num_classes + 1)
 (batch, 10, J) -> KDE -> (batch, J*num_nodes) -> MAGIC!! -> (batch, 4)
 
-
-3. Trainers
-- use the same hooks and stuff
+3. Trainers [In Progress]
 - UCC model:
 * track ucc accuracy- loss, autoencoder-loss, combined loss after epoch. do one batch of ucc reconstruction
+* implement that model and also ensure that the values assigned for the loss value (alpha value is indicative of what I want to optimize) more.
+* Autoencoder + UCC loss
+
 - UCC-RCC model:
 * do SSIM loss + RCC path + the new loss(es)
+* Autoencoder + UCC loss + RCC loss + UCC-RCC loss
+* This UCC-RCC loss is like threshold the RCC vector and see if the no of things which are greater than 1 is equal to the UCC ka argmax
+
 
 4. Autoencoder predictions for each class
 * Looks like we need both the features ka mean and the distribution of features?
