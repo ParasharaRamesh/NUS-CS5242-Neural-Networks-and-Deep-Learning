@@ -144,7 +144,6 @@ class UCCTrainer:
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
 
-            # TODO.x14 there are a lot more things to consider here
             # Store running history
             self.store_running_history_hook(epoch, avg_train_stats, avg_val_stats)
 
@@ -264,12 +263,13 @@ class UCCTrainer:
         self.val_losses.append(avg_val_stats["avg_val_loss"])
         self.val_ucc_accuracies.append(avg_val_stats["avg_val_ucc_training_accuracy"])
 
-
     def save_model_checkpoint_hook(self, epoch, avg_train_stats, avg_val_stats):
         raise NotImplementedError("Need to implement this hook to save the model checkpoints")
 
     def get_current_running_history_state_hook(self):
-        raise NotImplementedError("Need to implement this hook to return the history after training the model")
+        return self.epoch_numbers, \
+            self.training_ae_losses, self.training_ucc_losses, self.training_losses, self.training_ucc_accuracies, \
+            self.val_ae_losses, self.val_ucc_losses, self.val_losses, self.val_ucc_accuracies
 
     # TODO.x check all the functions below this!
     # find the most recent file and return the path
