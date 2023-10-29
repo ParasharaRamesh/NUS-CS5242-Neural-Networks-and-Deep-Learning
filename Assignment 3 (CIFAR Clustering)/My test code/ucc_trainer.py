@@ -407,3 +407,9 @@ class UCCTrainer:
 
         plt.tight_layout()
         plt.show()
+
+    def calculate_min_js_divergence(self):
+        pass
+
+    def calculate_clustering_accuracy(self):
+        pass
