@@ -19,6 +19,9 @@ feature size = J
 
 3. Trainers [In Progress]
 - UCC model:
+* things to track:
+- ucc loss, ae loss, combined loss
+- ucc accuracy
 * track ucc accuracy- loss, autoencoder-loss, combined loss after epoch. do one batch of ucc reconstruction
 * implement that model and also ensure that the values assigned for the loss value (alpha value is indicative of what I want to optimize) more.
 * Autoencoder + UCC loss

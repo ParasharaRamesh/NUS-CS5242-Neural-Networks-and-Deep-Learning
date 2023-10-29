@@ -31,6 +31,17 @@ class UCCTrainer:
         self.ae_loss_criterion = nn.MSELoss()
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
 
+        # Values which can change based on loaded checkpoint
+        self.start_epoch = 0
+        self.epoch_numbers = []
+        self.training_losses = []
+        self.training_accuracies = []
+        self.validation_losses = []
+        self.validation_accuracies = []
+
+        self.train_correct_predictions = 0
+        self.train_total_batches = 0
+
     # main train code
     def train(self,
               num_epochs,
@@ -80,8 +91,9 @@ class UCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
-                ucc_loss = self.forward_propogate_ucc(decoded, one_hot_ucc_labels)
+                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(decoded, one_hot_ucc_labels)
 
+                #calculate combined loss
                 batch_loss = ae_loss + ucc_loss
 
                 # Gradient clipping
@@ -100,22 +112,18 @@ class UCCTrainer:
                 self.ae_scheduler.step()
                 self.ucc_scheduler.step()
 
-                # TODO.x10 add the cummulative batch_loss here
                 # add to epoch batch_loss
                 epoch_training_loss += batch_loss.item()
 
                 # Update the epoch progress bar (overwrite in place)
-                postfix = {
-                    "batch_loss": batch_loss.item()
+                batch_stats = {
+                    "batch_loss": batch_loss.item(),
+                    "ae_loss": ae_loss.item(),
+                    "ucc_loss": ucc_loss.item(),
+                    "batch_acc": batch_ucc_accuracy
                 }
 
-                # TODO.x11 have to calculate things like training accuracy, training batch_loss for all models
-                # e.g. computes things like accuracy
-                batch_stats = self.calculate_train_batch_stats_hook()
-
-                postfix.update(batch_stats)
-
-                epoch_progress_bar.set_postfix(postfix)
+                epoch_progress_bar.set_postfix(batch_stats)
                 epoch_progress_bar.update(1)
 
             # close the epoch progress bar
@@ -187,9 +195,7 @@ class UCCTrainer:
         ae_loss = self.ae_loss_criterion(decoded, images) # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
-    #TODO.x figure out how to get the labels for each batch here!
     def forward_propogate_ucc(self, decoded, one_hot_ucc_labels):
-        #TODO.x have to see how to use the ucc labels here!?
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
         batch_size, bag_size = config.batch_size, config.bag_size
         decoded = decoded.view(batch_size, bag_size, -1)
@@ -205,15 +211,12 @@ class UCCTrainer:
         batch_correct_predictions = (predicted == labels).sum().item()
         batch_size = labels.size(0)
 
-        # TODO. calculate batchwise accuracy/ucc_loss
-        # self.batch_accuracy = batch_correct_predictions / batch_size
-        # self.train_correct_predictions += batch_correct_predictions
-        # self.train_total_batches += labels.size(0)
+        # calculate batchwise accuracy/ucc_loss
+        batch_ucc_accuracy = batch_correct_predictions / batch_size
+        self.train_correct_predictions += batch_correct_predictions
+        self.train_total_batches += batch_size
 
-        return ucc_loss
-
-    def calculate_train_batch_stats_hook(self):
-        raise NotImplementedError("Need to implement this hook for computing the batch statistics like accuracy")
+        return ucc_loss, batch_ucc_accuracy
 
     def calculate_avg_train_stats_hook(self):
         raise NotImplementedError(
@@ -254,3 +257,7 @@ class UCCTrainer:
         else:
             model_file = f"model_epoch_{epoch_num}.pt"
         return os.path.join(directory, model_file)
+
+    def test_model(self):
+        raise NotImplementedError("Need to implement this hook to return the history after training the model")
+
