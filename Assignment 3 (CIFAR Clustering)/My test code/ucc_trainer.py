@@ -76,9 +76,11 @@ class UCCTrainer:
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
+                images, one_hot_ucc_labels = data
+
                 # calculate losses from both models for a batch of bags
-                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(data)
-                ucc_loss = self.forward_propogate_ucc(decoded)
+                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
+                ucc_loss = self.forward_propogate_ucc(decoded, one_hot_ucc_labels)
 
                 batch_loss = ae_loss + ucc_loss
 
@@ -176,17 +178,18 @@ class UCCTrainer:
             steps_per_epoch=len(self.train_loader)
         )
 
-    def forward_propagate_autoencoder(self, data):
+    def forward_propagate_autoencoder(self, images):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 wont be so bad
-        batch_size, num_samples, num_channels, height, width = data.size()
-        data = data.view(batch_size * num_samples, num_channels, height, width)
-        encoded, decoded = self.autoencoder_model(data) # we are feeding in Batch*bag images of shape (3,32,32)
-        ae_loss = self.ae_loss_criterion(decoded, data) # compares (Batch * Bag, 3,32,32)
+        batch_size, bag_size, num_channels, height, width = images.size()
+        images = images.view(batch_size * bag_size, num_channels, height, width)
+        encoded, decoded = self.autoencoder_model(images) # we are feeding in Batch*bag images of shape (3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, images) # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
     #TODO.x figure out how to get the labels for each batch here!
-    def forward_propogate_ucc(self, decoded):
+    def forward_propogate_ucc(self, decoded, one_hot_ucc_labels):
+        #TODO.x have to see how to use the ucc labels here!?
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
         batch_size, bag_size = config.batch_size, config.bag_size
         decoded = decoded.view(batch_size, bag_size, -1)
