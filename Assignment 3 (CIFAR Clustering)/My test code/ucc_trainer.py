@@ -3,7 +3,7 @@ from tqdm.auto import tqdm
 import os
 from params import *
 import matplotlib.pyplot as plt
-
+from torchvision.transforms import transforms
 
 class UCCTrainer:
     def __init__(self,
@@ -31,6 +31,9 @@ class UCCTrainer:
         # Loss criterion(s)
         self.ae_loss_criterion = nn.MSELoss()
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
+
+        #Transforms
+        self.tensor_to_img_transform = transforms.ToPILImage()
 
         # Values which can change based on loaded checkpoint
         self.start_epoch = 0
@@ -220,11 +223,11 @@ class UCCTrainer:
 
     def forward_propagate_autoencoder(self, images):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
-        # generally batch size of 16 is good for cifar10 so predicting 20 wont be so bad
+        # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        images = images.view(batch_size * bag_size, num_channels, height, width)
-        encoded, decoded = self.autoencoder_model(images)  # we are feeding in Batch*bag images of shape (3,32,32)
-        ae_loss = self.ae_loss_criterion(decoded, images)  # compares (Batch * Bag, 3,32,32)
+        bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+        encoded, decoded = self.autoencoder_model(bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, bag_images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
     def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
@@ -416,27 +419,29 @@ class UCCTrainer:
             model_file = f"model_epoch_{epoch_num}.pt"
         return os.path.join(directory, model_file)
 
-    # TODO.x
-    def test_model(self):
-        raise NotImplementedError("Need to implement this hook to return the history after training the model")
-
-    #TODO.x do a sample reconstructions
     def show_sample_reconstructions(self, dataloader):
-        self.model.eval()
+        self.autoencoder_model.eval()
 
         # Create a subplot grid
         fig, axes = plt.subplots(1, 2, figsize=(9, 9))
 
         with torch.no_grad():
             for val_data in dataloader:
-                sample_image, _ = val_data
+                val_images, _ = val_data
+
+                batch_size, bag_size, num_channels, height, width = val_images.size()
+                bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
 
                 # Forward pass through the model
-                _, predicted_image = self.model(sample_image)
+                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
 
-                # squeeze it
-                sample_image = sample_image.squeeze().to("cpu")
-                predicted_image = predicted_image.squeeze().to("cpu")
+                # take only one image from the bag
+                sample_image = bag_val_images[0]
+                predicted_image = val_reconstructed_images[0]
+
+                #get it to cpu
+                sample_image = sample_image.to("cpu")
+                predicted_image = predicted_image.to("cpu")
 
                 # convert to PIL Image
                 sample_image = self.tensor_to_img_transform(sample_image)
@@ -455,6 +460,52 @@ class UCCTrainer:
 
         plt.tight_layout()
         plt.show()
+
+    def test_model(self):
+        # class level init
+        self.eval_correct_predictions = 0
+        self.eval_total_batches = 0
+
+        test_loss = 0.0
+        test_ae_loss = 0.0
+        test_ucc_loss = 0.0
+
+        # set all models to eval mode
+        self.autoencoder_model.eval()
+        self.ucc_predictor_model.eval()
+
+        with torch.no_grad():
+            for test_batch_idx, test_data in enumerate(self.test_loader):
+                test_images, test_one_hot_ucc_labels = test_data
+
+                # calculate losses from both models for a batch of bags
+                test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
+                test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_decoded,
+                                                                                        test_one_hot_ucc_labels, False)
+
+                # calculate combined loss
+                test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
+
+                # cummulate the losses
+                test_ae_loss += test_batch_ae_loss
+                test_ucc_loss += test_batch_ucc_loss
+                test_loss += test_batch_loss
+
+        # Calculate average validation loss for the epoch
+        avg_test_loss = test_loss / len(self.val_loader)
+        avg_test_ucc_loss = test_ucc_loss / len(self.val_loader)
+        avg_test_ae_loss = test_ae_loss / len(self.val_loader)
+        avg_test_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
+
+        # show some sample predictions
+        self.show_sample_reconstructions(self.test_loader)
+
+        return {
+            "avg_test_loss": avg_test_loss,
+            "avg_test_ae_loss": avg_test_ae_loss,
+            "avg_test_ucc_loss": avg_test_ucc_loss,
+            "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
+        }
 
     def calculate_min_js_divergence(self):
         pass
