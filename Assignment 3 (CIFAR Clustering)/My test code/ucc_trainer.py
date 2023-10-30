@@ -9,6 +9,8 @@ from torchvision.transforms import transforms
 import torch.nn.functional as F
 from sklearn import metrics
 from sklearn.cluster import KMeans
+from scipy.optimize import linear_sum_assignment
+
 
 class UCCTrainer:
     def __init__(self,
@@ -580,32 +582,42 @@ class UCCTrainer:
         return min_divergence
 
     def calculate_clustering_accuracy(self):
-        '''
-        TODO.x here you need to find out how to do clustering accuracy using Kmeans
-        use self.autoencoder_test_dataloaders
-        lfs = []
-        for each autoencoder_test_loader in self.autoencoder_test_dataloaders:
-            for batch in autoencoder_test_loader:
-                batch is of shape (batch=1,3,32,32)
-                lf = encoder(batch)
-                collect all lfs and do kmeans clustering
-
-
-        '''
         all_latent_features = []
+        truth_labels_arr = []
         for pure_autoencoder_loader in self.autoencoder_loaders:
-            for batch_idx, images in tqdm(enumerate(pure_autoencoder_loader)):
-                # batch data is of shape ( 1,3,32,32)
-                latent_features = self.autoencoder_model.encoder(images)  # shape (1, 48*16)
-                latent_features = latent_features.squeeze().numpy() # ndarray shape (48*16)
+            for batch_idx, data in tqdm(enumerate(pure_autoencoder_loader)):
+                # batch data is of shape (1,3,32,32), (1,1)
+                image, label = data
+                latent_features = self.autoencoder_model.encoder(image)  # shape (1, 48*16)
+
+                latent_features = latent_features.squeeze().numpy()  # ndarray shape (48*16)
+                label = label.squeeze().numpy()  # ndarray shape (1)
+
                 all_latent_features.append(latent_features)
+                truth_labels_arr.append(label)
 
         all_latent_features = np.array(all_latent_features)
 
-        #Do kmeans fit
+        # Do kmeans fit
         estimator = KMeans(n_clusters=10, init='k-means++', n_init=10)
         estimator.fit(all_latent_features)
         predicted_clustering_labels = estimator.labels_
 
-        #TODO.x now have to calculate accuracy
+        # Calculate accuracy
+        cost_matrix = np.zeros((10, 10))
+        num_samples = np.zeros(10)
+        for truth_val in range(10):
+            temp_sample_indices = np.where(truth_labels_arr == truth_val)[0]
+            num_samples[truth_val] = temp_sample_indices.shape[0]
 
+            temp_predicted_labels = predicted_clustering_labels[temp_sample_indices]
+
+            for predicted_val in range(10):
+                temp_matching_pairs = np.where(temp_predicted_labels == predicted_val)[0]
+                cost_matrix[truth_val, predicted_val] = 1 - (temp_matching_pairs.shape[0] / temp_sample_indices.shape[0])
+
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        cost = cost_matrix[row_ind, col_ind]
+
+        clustering_acc = ((1 - cost) * num_samples).sum() / num_samples.sum()
+        return clustering_acc
