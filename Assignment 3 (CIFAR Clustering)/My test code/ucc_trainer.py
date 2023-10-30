@@ -112,7 +112,7 @@ class UCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
-                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(decoded, one_hot_ucc_labels, True)
+                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(encoded, one_hot_ucc_labels, True)
 
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss
@@ -244,13 +244,13 @@ class UCCTrainer:
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
-    def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
-        # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-        batch_times_bag_size, feature_size = decoded.size()
+    def forward_propogate_ucc(self, encoded, one_hot_ucc_labels, is_train_mode=True):
+        # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
+        batch_times_bag_size, feature_size = encoded.size()
         bag_size = config.bag_size
         batch_size = batch_times_bag_size // bag_size
-        decoded = decoded.view(batch_size, bag_size, feature_size)
-        ucc_logits = self.ucc_predictor_model(decoded)
+        encoded = encoded.view(batch_size, bag_size, feature_size)
+        ucc_logits = self.ucc_predictor_model(encoded)
 
         # compute the ucc_loss
         ucc_loss = self.ucc_loss_criterion(ucc_logits, one_hot_ucc_labels)
@@ -310,7 +310,7 @@ class UCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
-                val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_decoded,
+                val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_encoded,
                                                                                         val_one_hot_ucc_labels, False)
 
                 # calculate combined loss
@@ -494,7 +494,7 @@ class UCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
-                test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_decoded,
+                test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_encoded,
                                                                                           test_one_hot_ucc_labels,
                                                                                           False)
 

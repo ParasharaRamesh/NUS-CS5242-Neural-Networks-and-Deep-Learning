@@ -126,8 +126,8 @@ class RCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
-                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(decoded, one_hot_ucc_labels, True)
-                rcc_loss, batch_rcc_accuracy = self.forward_propogate_rcc(decoded, rcc_labels, True)
+                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(encoded, one_hot_ucc_labels, True)
+                rcc_loss, batch_rcc_accuracy = self.forward_propogate_rcc(encoded, rcc_labels, True)
 
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss + rcc_loss
@@ -286,13 +286,13 @@ class RCCTrainer:
         return ae_loss, encoded, decoded
 
     # DONE
-    def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
+    def forward_propogate_ucc(self, encoded, one_hot_ucc_labels, is_train_mode=True):
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-        batch_times_bag_size, feature_size = decoded.size()
+        batch_times_bag_size, feature_size = encoded.size()
         bag_size = config.bag_size
         batch_size = batch_times_bag_size // bag_size
-        decoded = decoded.view(batch_size, bag_size, feature_size)
-        ucc_logits = self.ucc_predictor_model(decoded)
+        encoded = encoded.view(batch_size, bag_size, feature_size)
+        ucc_logits = self.ucc_predictor_model(encoded)
 
         # compute the ucc_loss
         ucc_loss = self.ucc_loss_criterion(ucc_logits, one_hot_ucc_labels)
@@ -319,13 +319,13 @@ class RCCTrainer:
     NOTE: To improve this I can also add a rcc-ucc-enforcement loss where the number of unique classes should match the ucc exactly
     '''
 
-    def forward_propogate_rcc(self, decoded, rcc_labels, is_train_mode=True):
+    def forward_propogate_rcc(self, encoded, rcc_labels, is_train_mode=True):
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-        batch_times_bag_size, feature_size = decoded.size()
+        batch_times_bag_size, feature_size = encoded.size()
         bag_size = config.bag_size
         batch_size = batch_times_bag_size // bag_size
-        decoded = decoded.view(batch_size, bag_size, feature_size)
-        rcc_logits = self.rcc_predictor_model(decoded)
+        encoded = encoded.view(batch_size, bag_size, feature_size)
+        rcc_logits = self.rcc_predictor_model(encoded)
 
         # round it to the nearest integer
         predicted = torch.round(rcc_logits)
@@ -401,9 +401,9 @@ class RCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
-                val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_decoded,
+                val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_encoded,
                                                                                         val_one_hot_ucc_labels, False)
-                val_batch_rcc_loss, val_batch_rcc_accuracy = self.forward_propogate_rcc(val_decoded, val_rcc_labels,
+                val_batch_rcc_loss, val_batch_rcc_accuracy = self.forward_propogate_rcc(val_encoded, val_rcc_labels,
                                                                                         False)
 
                 # calculate combined loss
@@ -622,9 +622,9 @@ class RCCTrainer:
 
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
-                test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_decoded,
+                test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_encoded,
                                                                                         test_one_hot_ucc_labels, False)
-                test_batch_rcc_loss, test_batch_rcc_accuracy = self.forward_propogate_rcc(test_decoded, test_rcc_labels,
+                test_batch_rcc_loss, test_batch_rcc_accuracy = self.forward_propogate_rcc(test_encoded, test_rcc_labels,
                                                                                         False)
 
                 # calculate combined loss
