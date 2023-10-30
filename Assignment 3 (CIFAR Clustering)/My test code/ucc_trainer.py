@@ -216,7 +216,8 @@ class UCCTrainer:
             self.ae_optimizer,
             config.learning_rate,
             epochs=num_epochs,
-            steps_per_epoch=len(self.train_loader) * config.bag_size
+            steps_per_epoch=len(self.train_loader)
+            # steps_per_epoch=len(self.train_loader) * config.bag_size # this is only if I decide to go image by image level loss as opposed to bag level loss
         )
 
         # here we are doing it at a bag level

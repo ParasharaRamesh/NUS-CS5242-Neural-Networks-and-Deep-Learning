@@ -9,7 +9,6 @@ from tqdm import tqdm
 import random
 from params import *
 
-
 class Dataset:
     def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test,
                  batch_size=config.batch_size, bag_size=config.bag_size,
