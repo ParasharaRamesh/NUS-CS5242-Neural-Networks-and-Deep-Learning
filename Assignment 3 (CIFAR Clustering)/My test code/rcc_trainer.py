@@ -132,9 +132,10 @@ class RCCTrainer:
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss + rcc_loss
 
-                # Gradient clipping
-                nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
-                nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
+                # Gradient clipping(causing colab to crash!)
+                # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
+                # nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
+                # nn.utils.clip_grad_value_(self.rcc_predictor_model.parameters(), config.grad_clip)
 
                 # do optimizer step and zerograd for autoencoder model
                 self.ae_optimizer.step()
