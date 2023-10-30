@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 from torch import nn, optim
 from tqdm.auto import tqdm
 import os
@@ -7,7 +7,8 @@ from params import *
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
 import torch.nn.functional as F
-
+from sklearn import metrics
+from sklearn.cluster import KMeans
 
 class UCCTrainer:
     def __init__(self,
@@ -235,9 +236,10 @@ class UCCTrainer:
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        bag_images = images.view(batch_size * bag_size, num_channels, height, width)
-        encoded, decoded = self.autoencoder_model(bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
-        ae_loss = self.ae_loss_criterion(decoded, bag_images)  # compares (Batch * Bag, 3,32,32)
+        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+        encoded, decoded = self.autoencoder_model(
+            batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
     def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
@@ -518,46 +520,6 @@ class UCCTrainer:
             "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
         }
 
-    def calculate_min_js_divergence(self):
-        num_classes = len(self.kde_loaders)
-        kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
-
-        # find the average kde across all classes
-        for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
-            num_imgs_in_class = 0
-            for batch_idx, batch_data in tqdm(enumerate(pure_class_kde_loader)):
-                latent_features = self.autoencoder_model.encoder(batch_data)
-                batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
-                num_imgs_in_class += batch_kde_distributions.size(0)
-                kde_distributions = torch.sum(batch_kde_distributions, dim=0)
-                kde_per_class[class_idx] += kde_distributions
-            kde_per_class[class_idx] /= num_imgs_in_class
-
-        # find the js_divergence
-        min_divergence = torch.inf
-        best_i = None
-        best_j = None
-        for i in range(num_classes):
-            for j in range(i+1, num_classes):
-                divergence = self.js_divergence(kde_per_class[i], kde_per_class[j])
-                print(f"JS Divergence between {i} & {j} is {divergence}")
-                if divergence < min_divergence:
-                    min_divergence = divergence
-                    best_i = i
-                    best_j = j
-
-        print(f"Min JS Divergence is {min_divergence} between classes {best_i} & {best_j}")
-        #return the min divergence
-        return min_divergence
-
-
-    def calculate_clustering_accuracy(self):
-        '''
-        TODO.x here you need to find out how to do clustering accuracy using Kmeans
-
-        '''
-        pass
-
     def js_divergence(self, p, q):
         """
         Calculate the Jensen-Shannon Divergence between two probability distributions p and q.
@@ -580,3 +542,70 @@ class UCCTrainer:
         js_divergence = 0.5 * (kl_div_p + kl_div_q)
 
         return js_divergence
+
+    def calculate_min_js_divergence(self):
+        num_classes = len(self.kde_loaders)
+        kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
+
+        # find the average kde across all classes
+        for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
+            num_imgs_in_class = 0
+            for batch_idx, images in tqdm(enumerate(pure_class_kde_loader)):
+                # batch data is of shape ( Batch,bag, 3,32,32)
+                batch_size, bag_size, num_channels, height, width = images.size()
+                # reshaping to shape ( batch * bag, 3 ,32,32)
+                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+                latent_features = self.autoencoder_model.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
+                batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
+                num_imgs_in_class += batch_kde_distributions.size(0)
+                kde_distributions = torch.sum(batch_kde_distributions, dim=0)
+                kde_per_class[class_idx] += kde_distributions
+            kde_per_class[class_idx] /= num_imgs_in_class
+
+        # find the js_divergence
+        min_divergence = torch.inf
+        best_i = None
+        best_j = None
+        for i in range(num_classes):
+            for j in range(i + 1, num_classes):
+                divergence = self.js_divergence(kde_per_class[i], kde_per_class[j])
+                print(f"JS Divergence between {i} & {j} is {divergence}")
+                if divergence < min_divergence:
+                    min_divergence = divergence
+                    best_i = i
+                    best_j = j
+
+        print(f"Min JS Divergence is {min_divergence} between classes {best_i} & {best_j}")
+        # return the min divergence
+        return min_divergence
+
+    def calculate_clustering_accuracy(self):
+        '''
+        TODO.x here you need to find out how to do clustering accuracy using Kmeans
+        use self.autoencoder_test_dataloaders
+        lfs = []
+        for each autoencoder_test_loader in self.autoencoder_test_dataloaders:
+            for batch in autoencoder_test_loader:
+                batch is of shape (batch=1,3,32,32)
+                lf = encoder(batch)
+                collect all lfs and do kmeans clustering
+
+
+        '''
+        all_latent_features = []
+        for pure_autoencoder_loader in self.autoencoder_loaders:
+            for batch_idx, images in tqdm(enumerate(pure_autoencoder_loader)):
+                # batch data is of shape ( 1,3,32,32)
+                latent_features = self.autoencoder_model.encoder(images)  # shape (1, 48*16)
+                latent_features = latent_features.squeeze().numpy() # ndarray shape (48*16)
+                all_latent_features.append(latent_features)
+
+        all_latent_features = np.array(all_latent_features)
+
+        #Do kmeans fit
+        estimator = KMeans(n_clusters=10, init='k-means++', n_init=10)
+        estimator.fit(all_latent_features)
+        predicted_clustering_labels = estimator.labels_
+
+        #TODO.x now have to calculate accuracy
+

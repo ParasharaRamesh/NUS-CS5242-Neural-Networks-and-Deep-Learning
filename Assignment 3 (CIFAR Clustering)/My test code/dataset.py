@@ -87,7 +87,8 @@ class Dataset:
         print("Creating KDE dataloaders")
         self.kde_test_dataloaders = self.create_kde_dataloaders(self.test_sub_datasets)
         print("Created KDE dataloaders, now creating autoencoder dataloaders")
-        self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, self.batch_size) for test_sub_dataset in
+        #batch size is 1 as we care about image level features anyway
+        self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, 1) for test_sub_dataset in
                                              self.test_sub_datasets]
         print("Created autoencoder dataloaders, now creating ucc dataloaders")
         self.ucc_train_dataloader, self.ucc_test_dataloader, self.ucc_val_dataloader = self.get_dataloaders_for_ucc()
@@ -124,6 +125,8 @@ class Dataset:
             kde_datasets.append(TensorDataset(torch.stack(bag_tensors)))
 
         print("Finished constructing the kde_datasets from the test dataset, now creating dataloaders")
+
+        #NOTE. the batch size here can be different if required.
         kde_data_loaders = [DeviceDataLoader(kde_sub_dataset, self.batch_size) for kde_sub_dataset in kde_datasets]
         return kde_data_loaders
 
