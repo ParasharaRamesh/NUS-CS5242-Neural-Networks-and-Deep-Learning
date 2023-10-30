@@ -176,7 +176,8 @@ class UCCTrainer:
             epoch_progress_bar.close()
 
             # calculate average epoch train statistics
-            avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss, epoch_rcc_loss)
+            avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss,
+                                                                  epoch_rcc_loss)
 
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
@@ -273,6 +274,7 @@ class UCCTrainer:
             steps_per_epoch=len(self.train_loader)
         )
 
+    # DONE
     def forward_propagate_autoencoder(self, images):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
@@ -283,6 +285,7 @@ class UCCTrainer:
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
+    # DONE
     def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
         batch_times_bag_size, feature_size = decoded.size()
@@ -304,73 +307,121 @@ class UCCTrainer:
         # calculate batchwise accuracy/ucc_loss
         batch_ucc_accuracy = batch_correct_predictions / batch_size
         if is_train_mode:
-            self.train_correct_predictions += batch_correct_predictions
-            self.train_total_batches += batch_size
+            self.train_ucc_correct_predictions += batch_correct_predictions
+            self.train_ucc_total_batches += batch_size
         else:
-            self.eval_correct_predictions += batch_correct_predictions
-            self.eval_total_batches += batch_size
+            self.eval_ucc_correct_predictions += batch_correct_predictions
+            self.eval_ucc_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy
 
-    #TODO.x ensure that you take the rcc loss and the combined ucc-rcc enforcement loss
-    def forward_propogate_rcc(self, decoded, rcc_labels, is_train_mode=True):
-        pass
+    # DONE
+    '''
+    NOTE: To improve this I can also add a rcc-ucc-enforcement loss where the number of unique classes should match the ucc exactly
+    '''
 
-    #TODO.x need to incorporate rcc loss here!
+    def forward_propogate_rcc(self, decoded, rcc_labels, is_train_mode=True):
+        # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
+        batch_times_bag_size, feature_size = decoded.size()
+        bag_size = config.bag_size
+        batch_size = batch_times_bag_size // bag_size
+        decoded = decoded.view(batch_size, bag_size, feature_size)
+        rcc_logits = self.rcc_predictor_model(decoded)
+
+        # round it to the nearest integer
+        predicted = torch.round(rcc_logits)
+
+        # compute the rcc_loss
+        rcc_loss = self.rcc_loss_criterion(rcc_logits, rcc_labels)
+
+        # compute the batch stats right here and save it
+        batch_size = rcc_labels.size(0)
+
+        # NOTE: not sure if it is dim
+        batch_correct_predictions = (predicted == rcc_labels).sum(dim=1).item()
+
+        # calculate batchwise accuracy/ucc_loss
+        batch_rcc_accuracy = batch_correct_predictions / batch_size
+        if is_train_mode:
+            self.train_rcc_correct_predictions += batch_correct_predictions
+            self.train_rcc_total_batches += batch_size
+        else:
+            self.eval_rcc_correct_predictions += batch_correct_predictions
+            self.eval_rcc_total_batches += batch_size
+        return rcc_loss, batch_rcc_accuracy
+
+    # DONE
     def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss, epoch_rcc_loss):
         avg_training_loss_for_epoch = epoch_training_loss / len(self.train_loader)
         avg_ae_loss_for_epoch = epoch_ae_loss / len(self.train_loader)
         avg_ucc_loss_for_epoch = epoch_ucc_loss / len(self.train_loader)
-        avg_ucc_training_accuracy = self.train_correct_predictions / self.train_total_batches
+        avg_rcc_loss_for_epoch = epoch_rcc_loss / len(self.train_loader)
+        avg_ucc_training_accuracy = self.train_ucc_correct_predictions / self.train_ucc_total_batches
+        avg_rcc_training_accuracy = self.train_rcc_correct_predictions / self.train_rcc_total_batches
 
         epoch_train_stats = {
             "avg_training_loss": avg_training_loss_for_epoch,
             "avg_ae_loss": avg_ae_loss_for_epoch,
             "avg_ucc_loss": avg_ucc_loss_for_epoch,
-            "avg_ucc_training_accuracy": avg_ucc_training_accuracy
+            "avg_rcc_loss": avg_rcc_loss_for_epoch,
+            "avg_ucc_training_accuracy": avg_ucc_training_accuracy,
+            "avg_rcc_training_accuracy": avg_rcc_training_accuracy
         }
 
         # reset
-        self.train_correct_predictions = 0
-        self.train_total_batches = 0
+        self.train_ucc_correct_predictions = 0
+        self.train_ucc_total_batches = 0
+
+        self.train_rcc_correct_predictions = 0
+        self.train_rcc_total_batches = 0
 
         return epoch_train_stats
 
-    #TODO.x
+    # DONE
     def validation_hook(self):
         # class level init
-        self.eval_correct_predictions = 0
-        self.eval_total_batches = 0
+        self.eval_ucc_correct_predictions = 0
+        self.eval_ucc_total_batches = 0
+
+        self.eval_rcc_correct_predictions = 0
+        self.eval_rcc_total_batches = 0
 
         val_loss = 0.0
         val_ae_loss = 0.0
         val_ucc_loss = 0.0
+        val_rcc_loss = 0.0
 
         # set all models to eval mode
         self.autoencoder_model.eval()
         self.ucc_predictor_model.eval()
+        self.rcc_predictor_model.eval()
 
         with torch.no_grad():
             for val_batch_idx, val_data in enumerate(self.val_loader):
-                val_images, val_one_hot_ucc_labels = val_data
+                val_images, val_one_hot_ucc_labels, val_rcc_labels = val_data
 
                 # calculate losses from both models for a batch of bags
                 val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
                 val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_decoded,
                                                                                         val_one_hot_ucc_labels, False)
+                val_batch_rcc_loss, val_batch_rcc_accuracy = self.forward_propogate_rcc(val_decoded, val_rcc_labels,
+                                                                                        False)
 
                 # calculate combined loss
-                val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss
+                val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss + val_batch_rcc_loss
 
                 # cummulate the losses
+                val_loss += val_batch_loss
                 val_ae_loss += val_batch_ae_loss
                 val_ucc_loss += val_batch_ucc_loss
-                val_loss += val_batch_loss
+                val_rcc_loss += val_batch_rcc_loss
 
         # Calculate average validation loss for the epoch
         avg_val_loss = val_loss / len(self.val_loader)
         avg_val_ucc_loss = val_ucc_loss / len(self.val_loader)
+        avg_val_rcc_loss = val_rcc_loss / len(self.val_loader)
         avg_val_ae_loss = val_ae_loss / len(self.val_loader)
-        avg_val_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
+        avg_val_ucc_training_accuracy = self.eval_ucc_correct_predictions / self.eval_ucc_total_batches
+        avg_val_rcc_training_accuracy = self.eval_rcc_correct_predictions / self.eval_rcc_total_batches
 
         # show some sample predictions
         self.show_sample_reconstructions(self.val_loader)
@@ -379,35 +430,45 @@ class UCCTrainer:
             "avg_val_loss": avg_val_loss,
             "avg_val_ae_loss": avg_val_ae_loss,
             "avg_val_ucc_loss": avg_val_ucc_loss,
-            "avg_val_ucc_training_accuracy": avg_val_ucc_training_accuracy
+            "avg_val_rcc_loss": avg_val_rcc_loss,
+            "avg_val_ucc_training_accuracy": avg_val_ucc_training_accuracy,
+            "avg_val_rcc_training_accuracy": avg_val_rcc_training_accuracy
         }
 
-    # TODO.x
+    # DONE
     def calculate_and_print_epoch_stats_hook(self, avg_train_stats, avg_val_stats):
         epoch_loss = avg_train_stats["avg_training_loss"]
         epoch_ae_loss = avg_train_stats["avg_ae_loss"]
         epoch_ucc_loss = avg_train_stats["avg_ucc_loss"]
+        epoch_rcc_loss = avg_train_stats["avg_rcc_loss"]
         epoch_ucc_accuracy = avg_train_stats["avg_ucc_training_accuracy"]
+        epoch_rcc_accuracy = avg_train_stats["avg_rcc_training_accuracy"]
 
         epoch_val_loss = avg_val_stats["avg_val_loss"]
         epoch_val_ae_loss = avg_val_stats["avg_val_ae_loss"]
         epoch_val_ucc_loss = avg_val_stats["avg_val_ucc_loss"]
+        epoch_val_rcc_loss = avg_val_stats["avg_val_rcc_loss"]
         epoch_val_ucc_accuracy = avg_val_stats["avg_val_ucc_training_accuracy"]
+        epoch_val_rcc_accuracy = avg_val_stats["avg_val_rcc_training_accuracy"]
 
         print(
-            f"[TRAIN]: Epoch Loss: {epoch_loss} | AE Loss: {epoch_ae_loss} | UCC Loss: {epoch_ucc_loss} | UCC Acc: {epoch_ucc_accuracy}")
+            f"[TRAIN]: Epoch Loss: {epoch_loss} | AE Loss: {epoch_ae_loss} | UCC Loss: {epoch_ucc_loss} | UCC Acc: {epoch_ucc_accuracy} | RCC Loss: {epoch_rcc_loss} | RCC Acc: {epoch_rcc_accuracy}")
         print(
-            f"[VAL]: Val Loss: {epoch_val_loss} | Val AE Loss: {epoch_val_ae_loss} | Val UCC Loss: {epoch_val_ucc_loss} | Val UCC Acc: {epoch_val_ucc_accuracy}")
+            f"[VAL]: Val Loss: {epoch_val_loss} | Val AE Loss: {epoch_val_ae_loss} | Val UCC Loss: {epoch_val_ucc_loss} | Val UCC Acc: {epoch_val_ucc_accuracy} | Val RCC Loss: {epoch_val_rcc_loss} | Val RCC Acc: {epoch_val_rcc_accuracy}")
 
         return {
             "epoch_loss": epoch_loss,
             "epoch_ae_loss": epoch_ae_loss,
             "epoch_ucc_loss": epoch_ucc_loss,
+            "epoch_rcc_loss": epoch_rcc_loss,
             "epoch_ucc_acc": epoch_ucc_accuracy,
+            "epoch_rcc_acc": epoch_rcc_accuracy,
             "epoch_val_loss": epoch_val_loss,
             "epoch_val_ae_loss": epoch_val_ae_loss,
             "epoch_val_ucc_loss": epoch_val_ucc_loss,
-            "epoch_val_ucc_acc": epoch_val_ucc_accuracy
+            "epoch_val_rcc_loss": epoch_val_rcc_loss,
+            "epoch_val_ucc_acc": epoch_val_ucc_accuracy,
+            "epoch_val_rcc_acc": epoch_val_rcc_accuracy
         }
 
     # DONE
@@ -503,7 +564,7 @@ class UCCTrainer:
 
         with torch.no_grad():
             for val_data in dataloader:
-                val_images, _ = val_data
+                val_images, _, _ = val_data
 
                 batch_size, bag_size, num_channels, height, width = val_images.size()
                 bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
@@ -540,40 +601,49 @@ class UCCTrainer:
     # TODO.x
     def test_model(self):
         # class level init
-        self.eval_correct_predictions = 0
-        self.eval_total_batches = 0
+        self.eval_ucc_correct_predictions = 0
+        self.eval_ucc_total_batches = 0
+
+        self.eval_rcc_correct_predictions = 0
+        self.eval_rcc_total_batches = 0
 
         test_loss = 0.0
         test_ae_loss = 0.0
         test_ucc_loss = 0.0
+        test_rcc_loss = 0.0
 
         # set all models to eval mode
         self.autoencoder_model.eval()
         self.ucc_predictor_model.eval()
+        self.rcc_predictor_model.eval()
 
         with torch.no_grad():
             for test_batch_idx, test_data in enumerate(self.test_loader):
-                test_images, test_one_hot_ucc_labels = test_data
+                test_images, test_one_hot_ucc_labels, test_rcc_labels = test_data
 
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_decoded,
-                                                                                          test_one_hot_ucc_labels,
-                                                                                          False)
+                                                                                        test_one_hot_ucc_labels, False)
+                test_batch_rcc_loss, test_batch_rcc_accuracy = self.forward_propogate_rcc(test_decoded, test_rcc_labels,
+                                                                                        False)
 
                 # calculate combined loss
-                test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
+                test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss + test_batch_rcc_loss
 
                 # cummulate the losses
+                test_loss += test_batch_loss
                 test_ae_loss += test_batch_ae_loss
                 test_ucc_loss += test_batch_ucc_loss
-                test_loss += test_batch_loss
+                test_rcc_loss += test_batch_rcc_loss
 
         # Calculate average validation loss for the epoch
-        avg_test_loss = test_loss / len(self.val_loader)
-        avg_test_ucc_loss = test_ucc_loss / len(self.val_loader)
-        avg_test_ae_loss = test_ae_loss / len(self.val_loader)
-        avg_test_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
+        avg_test_loss = test_loss / len(self.test_loader)
+        avg_test_ucc_loss = test_ucc_loss / len(self.test_loader)
+        avg_test_rcc_loss = test_rcc_loss / len(self.test_loader)
+        avg_test_ae_loss = test_ae_loss / len(self.test_loader)
+        avg_test_ucc_training_accuracy = self.eval_ucc_correct_predictions / self.eval_ucc_total_batches
+        avg_test_rcc_training_accuracy = self.eval_rcc_correct_predictions / self.eval_rcc_total_batches
 
         # show some sample predictions
         self.show_sample_reconstructions(self.test_loader)
@@ -582,7 +652,9 @@ class UCCTrainer:
             "avg_test_loss": avg_test_loss,
             "avg_test_ae_loss": avg_test_ae_loss,
             "avg_test_ucc_loss": avg_test_ucc_loss,
-            "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
+            "avg_test_rcc_loss": avg_test_rcc_loss,
+            "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy,
+            "avg_test_rcc_training_accuracy": avg_test_rcc_training_accuracy
         }
 
     # DONE
