@@ -325,7 +325,7 @@ class RCCTrainer:
         bag_size = config.bag_size
         batch_size = batch_times_bag_size // bag_size
         encoded = encoded.view(batch_size, bag_size, feature_size)
-        rcc_logits = self.rcc_predictor_model(encoded)
+        rcc_logits = self.rcc_predictor_model(encoded) #Predicts (Batch, rcc length)
 
         # round it to the nearest integer
         predicted = torch.round(rcc_logits)
@@ -333,20 +333,17 @@ class RCCTrainer:
         # compute the rcc_loss
         rcc_loss = self.rcc_loss_criterion(rcc_logits, rcc_labels)
 
-        # compute the batch stats right here and save it
-        batch_size = rcc_labels.size(0)
-
         # NOTE: not sure if it is dim
-        batch_correct_predictions = (predicted == rcc_labels).sum(dim=1).item()
+        batch_correct_predictions = (predicted == rcc_labels).sum().item()
 
         # calculate batchwise accuracy/ucc_loss
-        batch_rcc_accuracy = batch_correct_predictions / batch_size
+        batch_rcc_accuracy = batch_correct_predictions / batch_times_bag_size
         if is_train_mode:
             self.train_rcc_correct_predictions += batch_correct_predictions
-            self.train_rcc_total_batches += batch_size
+            self.train_rcc_total_batches += batch_times_bag_size
         else:
             self.eval_rcc_correct_predictions += batch_correct_predictions
-            self.eval_rcc_total_batches += batch_size
+            self.eval_rcc_total_batches += batch_times_bag_size
         return rcc_loss, batch_rcc_accuracy
 
     # DONE
