@@ -382,7 +382,7 @@ class UCCTrainer:
             self.training_ae_losses, self.training_ucc_losses, self.training_losses, self.training_ucc_accuracies, \
             self.val_ae_losses, self.val_ucc_losses, self.val_losses, self.val_ucc_accuracies
 
-    def save_model_checkpoint_hook(self, epoch, avg_train_stats, avg_val_stats):
+    def save_model_checkpoint_hook(self, epoch):
         # set it to train mode to save the weights (but doesn't matter apparently!)
         self.autoencoder_model.train()
         self.ucc_predictor_model.train()

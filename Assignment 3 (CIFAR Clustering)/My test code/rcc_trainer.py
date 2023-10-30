@@ -1,22 +1,31 @@
+import torch
+import numpy as np
 from torch import nn, optim
 from tqdm.auto import tqdm
 import os
 from params import *
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
+import torch.nn.functional as F
+from sklearn import metrics
+from sklearn.cluster import KMeans
+from scipy.optimize import linear_sum_assignment
 
-'''
-TODO.x finish this once UCC trainer is completely finished as the loss is a bit trickier
-'''
-class RCCTrainer:
+
+class UCCTrainer:
     def __init__(self,
                  name, autoencoder_model, ucc_predictor_model, rcc_predictor_model,
-                 train_loader, test_loader, val_loader,
-                 save_dir, device=config.device):
+                 dataset, save_dir, device=config.device):
         self.name = name
         self.save_dir = save_dir
         self.device = device
-        self.train_loader, self.test_loader, self.val_loader = train_loader, test_loader, val_loader
+
+        # data
+        self.train_loader = dataset.ucc_rcc_train_dataloader
+        self.test_loader = dataset.ucc_rcc_test_dataloader
+        self.val_loader = dataset.ucc_rcc_val_dataloader
+        self.kde_loaders = dataset.kde_test_dataloaders  # each dataloader here will return shape of (batch, bag, 3,32,32) of a pure dataset
+        self.autoencoder_loaders = dataset.autoencoder_test_dataloaders
 
         # create the directory if it doesn't exist!
         os.makedirs(self.save_dir, exist_ok=True)
@@ -39,28 +48,32 @@ class RCCTrainer:
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
         self.rcc_loss_criterion = nn.MSELoss()
 
-        #Transforms
+        # Transforms
         self.tensor_to_img_transform = transforms.ToPILImage()
 
         # Values which can change based on loaded checkpoint
         self.start_epoch = 0
         self.epoch_numbers = []
+
+        self.training_losses = []
         self.training_ae_losses = []
         self.training_ucc_losses = []
         self.training_rcc_losses = []
-        self.training_losses = []
         self.training_ucc_accuracies = []
         self.training_rcc_accuracies = []
 
+        self.val_losses = []
         self.val_ae_losses = []
         self.val_ucc_losses = []
         self.val_rcc_losses = []
-        self.val_losses = []
         self.val_ucc_accuracies = []
         self.val_rcc_accuracies = []
 
-        self.train_correct_predictions = 0
-        self.train_total_batches = 0
+        self.train_ucc_correct_predictions = 0
+        self.train_ucc_total_batches = 0
+
+        self.train_rcc_correct_predictions = 0
+        self.train_rcc_total_batches = 0
 
     # main train code
     def train(self,
@@ -99,22 +112,25 @@ class RCCTrainer:
             # set all models to train mode
             self.autoencoder_model.train()
             self.ucc_predictor_model.train()
+            self.rcc_predictor_model.train()
 
             # set the epoch training batch_loss
             epoch_training_loss = 0.0
             epoch_ae_loss = 0.0
             epoch_ucc_loss = 0.0
+            epoch_rcc_loss = 0.0
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
-                images, one_hot_ucc_labels = data
+                images, one_hot_ucc_labels, rcc_labels = data
 
                 # calculate losses from both models for a batch of bags
                 ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
                 ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(decoded, one_hot_ucc_labels, True)
+                rcc_loss, batch_rcc_accuracy = self.forward_propogate_rcc(decoded, rcc_labels, True)
 
                 # calculate combined loss
-                batch_loss = ae_loss + ucc_loss
+                batch_loss = ae_loss + ucc_loss + rcc_loss
 
                 # Gradient clipping
                 nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
@@ -128,21 +144,29 @@ class RCCTrainer:
                 self.ucc_optimizer.step()
                 self.ucc_optimizer.zero_grad()
 
+                # do optimizer step and zerograd for rcc model
+                self.rcc_optimizer.step()
+                self.rcc_optimizer.zero_grad()
+
                 # scheduler update (remove if it doesnt work!)
                 self.ae_scheduler.step()
                 self.ucc_scheduler.step()
+                self.rcc_scheduler.step()
 
                 # add to epoch batch_loss
                 epoch_training_loss += batch_loss.item()
                 epoch_ae_loss += ae_loss.item()
                 epoch_ucc_loss += ucc_loss.item()
+                epoch_rcc_loss += rcc_loss.item()
 
                 # Update the epoch progress bar (overwrite in place)
                 batch_stats = {
                     "batch_loss": batch_loss.item(),
                     "ae_loss": ae_loss.item(),
                     "ucc_loss": ucc_loss.item(),
-                    "batch_ucc_acc": batch_ucc_accuracy
+                    "rcc_loss": rcc_loss.item(),
+                    "batch_ucc_acc": batch_ucc_accuracy,
+                    "batch_rcc_acc": batch_rcc_accuracy
                 }
 
                 epoch_progress_bar.set_postfix(batch_stats)
@@ -152,7 +176,7 @@ class RCCTrainer:
             epoch_progress_bar.close()
 
             # calculate average epoch train statistics
-            avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss)
+            avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss, epoch_rcc_loss)
 
             # calculate validation statistics
             avg_val_stats = self.validation_hook()
@@ -174,7 +198,7 @@ class RCCTrainer:
             need_to_save_model_checkpoint = (epoch + 1) % epoch_saver_count == 0
             if need_to_save_model_checkpoint:
                 print(f"Going to save model {self.name} @ Epoch:{epoch + 1}")
-                self.save_model_checkpoint_hook(epoch, avg_train_stats, avg_val_stats)
+                self.save_model_checkpoint_hook(epoch)
 
             print("-" * 60)
 
@@ -185,6 +209,7 @@ class RCCTrainer:
         return self.get_current_running_history_state_hook()
 
     # hooks
+    # DONE
     def init_params_from_checkpoint_hook(self, load_from_checkpoint, resume_epoch_num):
         if load_from_checkpoint:
             # NOTE: resume_epoch_num can be None here if we want to load from the most recently saved checkpoint!
@@ -194,10 +219,12 @@ class RCCTrainer:
             # load previous state of models
             self.autoencoder_model.load_state_dict(checkpoint['ae_model_state_dict'])
             self.ucc_predictor_model.load_state_dict(checkpoint['ucc_model_state_dict'])
+            self.rcc_predictor_model.load_state_dict(checkpoint['rcc_model_state_dict'])
 
             # load previous state of optimizers
             self.ae_optimizer.load_state_dict(checkpoint['ae_optimizer_state_dict'])
             self.ucc_optimizer.load_state_dict(checkpoint['ucc_optimizer_state_dict'])
+            self.rcc_optimizer.load_state_dict(checkpoint['rcc_optimizer_state_dict'])
 
             # Things we are keeping track of
             self.start_epoch = checkpoint['epoch']
@@ -206,22 +233,28 @@ class RCCTrainer:
             self.training_losses = checkpoint['training_losses']
             self.training_ae_losses = checkpoint['training_ae_losses']
             self.training_ucc_losses = checkpoint['training_ucc_losses']
+            self.training_rcc_losses = checkpoint['training_rcc_losses']
             self.training_ucc_accuracies = checkpoint['training_ucc_accuracies']
+            self.training_rcc_accuracies = checkpoint['training_rcc_accuracies']
 
             self.val_losses = checkpoint['val_losses']
             self.val_ae_losses = checkpoint['val_ae_losses']
             self.val_ucc_losses = checkpoint['val_ucc_losses']
+            self.val_rcc_losses = checkpoint['val_rcc_losses']
             self.val_ucc_accuracies = checkpoint['val_ucc_accuracies']
+            self.val_rcc_accuracies = checkpoint['val_rcc_accuracies']
 
             print(f"Model checkpoint for {self.name} is loaded from {checkpoint_path}!")
 
+    # DONE
     def init_scheduler_hook(self, num_epochs):
         # steps per epoch here is multiplied with bag size as we are doing it at an image level
         self.ae_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.ae_optimizer,
             config.learning_rate,
             epochs=num_epochs,
-            steps_per_epoch=len(self.train_loader) * config.bag_size
+            steps_per_epoch=len(self.train_loader)
+            # steps_per_epoch=len(self.train_loader) * config.bag_size # this is only if I decide to go image by image level loss as opposed to bag level loss
         )
 
         # here we are doing it at a bag level
@@ -232,13 +265,22 @@ class RCCTrainer:
             steps_per_epoch=len(self.train_loader)
         )
 
+        # here we are doing it at a bag level
+        self.rcc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            self.rcc_optimizer,
+            config.learning_rate,
+            epochs=num_epochs,
+            steps_per_epoch=len(self.train_loader)
+        )
+
     def forward_propagate_autoencoder(self, images):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        bag_images = images.view(batch_size * bag_size, num_channels, height, width)
-        encoded, decoded = self.autoencoder_model(bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
-        ae_loss = self.ae_loss_criterion(decoded, bag_images)  # compares (Batch * Bag, 3,32,32)
+        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+        encoded, decoded = self.autoencoder_model(
+            batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
     def forward_propogate_ucc(self, decoded, one_hot_ucc_labels, is_train_mode=True):
@@ -269,7 +311,12 @@ class RCCTrainer:
             self.eval_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy
 
-    def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss):
+    #TODO.x ensure that you take the rcc loss and the combined ucc-rcc enforcement loss
+    def forward_propogate_rcc(self, decoded, rcc_labels, is_train_mode=True):
+        pass
+
+    #TODO.x need to incorporate rcc loss here!
+    def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss, epoch_rcc_loss):
         avg_training_loss_for_epoch = epoch_training_loss / len(self.train_loader)
         avg_ae_loss_for_epoch = epoch_ae_loss / len(self.train_loader)
         avg_ucc_loss_for_epoch = epoch_ucc_loss / len(self.train_loader)
@@ -288,6 +335,7 @@ class RCCTrainer:
 
         return epoch_train_stats
 
+    #TODO.x
     def validation_hook(self):
         # class level init
         self.eval_correct_predictions = 0
@@ -334,6 +382,7 @@ class RCCTrainer:
             "avg_val_ucc_training_accuracy": avg_val_ucc_training_accuracy
         }
 
+    # TODO.x
     def calculate_and_print_epoch_stats_hook(self, avg_train_stats, avg_val_stats):
         epoch_loss = avg_train_stats["avg_training_loss"]
         epoch_ae_loss = avg_train_stats["avg_ae_loss"]
@@ -361,28 +410,36 @@ class RCCTrainer:
             "epoch_val_ucc_acc": epoch_val_ucc_accuracy
         }
 
+    # DONE
     def store_running_history_hook(self, epoch, avg_train_stats, avg_val_stats):
         self.epoch_numbers.append(epoch + 1)
 
         self.training_ae_losses.append(avg_train_stats["avg_ae_loss"])
         self.training_ucc_losses.append(avg_train_stats["avg_ucc_loss"])
+        self.training_rcc_losses.append(avg_train_stats["avg_rcc_loss"])
         self.training_losses.append(avg_train_stats["avg_training_loss"])
         self.training_ucc_accuracies.append(avg_train_stats["avg_ucc_training_accuracy"])
+        self.training_rcc_accuracies.append(avg_train_stats["avg_rcc_training_accuracy"])
 
         self.val_ae_losses.append(avg_val_stats["avg_val_ae_loss"])
         self.val_ucc_losses.append(avg_val_stats["avg_val_ucc_loss"])
+        self.val_rcc_losses.append(avg_val_stats["avg_val_rcc_loss"])
         self.val_losses.append(avg_val_stats["avg_val_loss"])
         self.val_ucc_accuracies.append(avg_val_stats["avg_val_ucc_training_accuracy"])
+        self.val_rcc_accuracies.append(avg_val_stats["avg_val_rcc_training_accuracy"])
 
+    # DONE
     def get_current_running_history_state_hook(self):
         return self.epoch_numbers, \
-            self.training_ae_losses, self.training_ucc_losses, self.training_losses, self.training_ucc_accuracies, \
-            self.val_ae_losses, self.val_ucc_losses, self.val_losses, self.val_ucc_accuracies
+            self.training_ae_losses, self.training_ucc_losses, self.training_rcc_losses, self.training_losses, self.training_ucc_accuracies, self.training_rcc_accuracies, \
+            self.val_ae_losses, self.val_ucc_losses, self.val_rcc_losses, self.val_losses, self.val_ucc_accuracies, self.val_rcc_accuracies
 
-    def save_model_checkpoint_hook(self, epoch, avg_train_stats, avg_val_stats):
+    # DONE
+    def save_model_checkpoint_hook(self, epoch):
         # set it to train mode to save the weights (but doesn't matter apparently!)
         self.autoencoder_model.train()
         self.ucc_predictor_model.train()
+        self.rcc_predictor_model.train()
 
         # create the directory if it doesn't exist
         model_save_directory = os.path.join(self.save_dir, self.name)
@@ -394,23 +451,30 @@ class RCCTrainer:
             {
                 'ae_model_state_dict': self.autoencoder_model.state_dict(),
                 'ucc_model_state_dict': self.ucc_predictor_model.state_dict(),
+                'rcc_model_state_dict': self.rcc_predictor_model.state_dict(),
                 'ae_optimizer_state_dict': self.ae_optimizer.state_dict(),
                 'ucc_optimizer_state_dict': self.ucc_optimizer.state_dict(),
+                'rcc_optimizer_state_dict': self.rcc_optimizer.state_dict(),
                 'epoch': epoch + 1,
                 'epoch_numbers': self.epoch_numbers,
                 'training_losses': self.training_losses,
                 'training_ae_losses': self.training_ae_losses,
                 'training_ucc_losses': self.training_ucc_losses,
+                'training_rcc_losses': self.training_rcc_losses,
                 'training_ucc_accuracies': self.training_ucc_accuracies,
+                'training_rcc_accuracies': self.training_rcc_accuracies,
                 'val_losses': self.val_losses,
                 'val_ae_losses': self.val_ae_losses,
                 'val_ucc_losses': self.val_ucc_losses,
+                'val_rcc_losses': self.val_rcc_losses,
                 'val_ucc_accuracies': self.val_ucc_accuracies,
+                'val_rcc_accuracies': self.val_rcc_accuracies
             },
             checkpoint_path
         )
         print(f"Saved the model checkpoint for experiment {self.name} for epoch {epoch + 1}")
 
+    # DONE
     # find the most recent file and return the path
     def get_model_checkpoint_path(self, epoch_num=None):
         directory = os.path.join(self.save_dir, self.name)
@@ -430,6 +494,7 @@ class RCCTrainer:
             model_file = f"model_epoch_{epoch_num}.pt"
         return os.path.join(directory, model_file)
 
+    # DONE
     def show_sample_reconstructions(self, dataloader):
         self.autoencoder_model.eval()
 
@@ -450,7 +515,7 @@ class RCCTrainer:
                 sample_image = bag_val_images[0]
                 predicted_image = val_reconstructed_images[0]
 
-                #get it to cpu
+                # get it to cpu
                 sample_image = sample_image.to("cpu")
                 predicted_image = predicted_image.to("cpu")
 
@@ -472,6 +537,7 @@ class RCCTrainer:
         plt.tight_layout()
         plt.show()
 
+    # TODO.x
     def test_model(self):
         # class level init
         self.eval_correct_predictions = 0
@@ -492,7 +558,8 @@ class RCCTrainer:
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_decoded,
-                                                                                        test_one_hot_ucc_labels, False)
+                                                                                          test_one_hot_ucc_labels,
+                                                                                          False)
 
                 # calculate combined loss
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
@@ -518,8 +585,106 @@ class RCCTrainer:
             "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
         }
 
-    def calculate_min_js_divergence(self):
-        pass
+    # DONE
+    def js_divergence(self, p, q):
+        """
+        Calculate the Jensen-Shannon Divergence between two probability distributions p and q.
 
+        Args:
+        p (torch.Tensor): Probability distribution p.
+        q (torch.Tensor): Probability distribution q.
+
+        Returns:
+        torch.Tensor: Jensen-Shannon Divergence between p and q.
+        """
+        # Calculate the average distribution 'm'
+        m = 0.5 * (p + q)
+
+        # Calculate the KL Divergence of 'p' and 'q' from 'm'
+        kl_div_p = F.kl_div(p.log(), m, reduction='batchmean')
+        kl_div_q = F.kl_div(q.log(), m, reduction='batchmean')
+
+        # Compute the JS Divergence
+        js_divergence = 0.5 * (kl_div_p + kl_div_q)
+
+        return js_divergence
+
+    # DONE
+    def calculate_min_js_divergence(self):
+        num_classes = len(self.kde_loaders)
+        kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
+
+        # find the average kde across all classes
+        for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
+            num_imgs_in_class = 0
+            for batch_idx, images in tqdm(enumerate(pure_class_kde_loader)):
+                # batch data is of shape ( Batch,bag, 3,32,32)
+                batch_size, bag_size, num_channels, height, width = images.size()
+                # reshaping to shape ( batch * bag, 3 ,32,32)
+                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+                latent_features = self.autoencoder_model.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
+                batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
+                num_imgs_in_class += batch_kde_distributions.size(0)
+                kde_distributions = torch.sum(batch_kde_distributions, dim=0)
+                kde_per_class[class_idx] += kde_distributions
+            kde_per_class[class_idx] /= num_imgs_in_class
+
+        # find the js_divergence
+        min_divergence = torch.inf
+        best_i = None
+        best_j = None
+        for i in range(num_classes):
+            for j in range(i + 1, num_classes):
+                divergence = self.js_divergence(kde_per_class[i], kde_per_class[j])
+                print(f"JS Divergence between {i} & {j} is {divergence}")
+                if divergence < min_divergence:
+                    min_divergence = divergence
+                    best_i = i
+                    best_j = j
+
+        print(f"Min JS Divergence is {min_divergence} between classes {best_i} & {best_j}")
+        # return the min divergence
+        return min_divergence
+
+    # DONE
     def calculate_clustering_accuracy(self):
-        pass
+        all_latent_features = []
+        truth_labels_arr = []
+        for pure_autoencoder_loader in self.autoencoder_loaders:
+            for batch_idx, data in tqdm(enumerate(pure_autoencoder_loader)):
+                # batch data is of shape (1,3,32,32), (1,1)
+                image, label = data
+                latent_features = self.autoencoder_model.encoder(image)  # shape (1, 48*16)
+
+                latent_features = latent_features.squeeze().numpy()  # ndarray shape (48*16)
+                label = label.squeeze().numpy()  # ndarray shape (1)
+
+                all_latent_features.append(latent_features)
+                truth_labels_arr.append(label)
+
+        all_latent_features = np.array(all_latent_features)
+
+        # Do kmeans fit
+        estimator = KMeans(n_clusters=10, init='k-means++', n_init=10)
+        estimator.fit(all_latent_features)
+        predicted_clustering_labels = estimator.labels_
+
+        # Calculate accuracy
+        cost_matrix = np.zeros((10, 10))
+        num_samples = np.zeros(10)
+        for truth_val in range(10):
+            temp_sample_indices = np.where(truth_labels_arr == truth_val)[0]
+            num_samples[truth_val] = temp_sample_indices.shape[0]
+
+            temp_predicted_labels = predicted_clustering_labels[temp_sample_indices]
+
+            for predicted_val in range(10):
+                temp_matching_pairs = np.where(temp_predicted_labels == predicted_val)[0]
+                cost_matrix[truth_val, predicted_val] = 1 - (
+                        temp_matching_pairs.shape[0] / temp_sample_indices.shape[0])
+
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        cost = cost_matrix[row_ind, col_ind]
+
+        clustering_acc = ((1 - cost) * num_samples).sum() / num_samples.sum()
+        return clustering_acc
