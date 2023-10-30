@@ -185,6 +185,7 @@ class Dataset:
             total_bags += len(sub_dataset)
         total_bags = total_bags // self.bag_size
 
+        # NOTE: we can technically pick more images before I am not enforcing that I am picking every image.
         for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
