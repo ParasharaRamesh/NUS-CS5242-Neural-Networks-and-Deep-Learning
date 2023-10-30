@@ -171,6 +171,7 @@ class Dataset:
         random_idx = random.randint(0, sub_dataset_length - 1)
         random_img = sub_dataset[random_idx][0]
         random_img = random_img.permute((2, 0, 1))
+        #TODO.x maybe try not augmenting it at all!
         if not is_eval:
             random_transform = random.choice(self.transforms)
             random_img = random_transform(random_img)
