@@ -117,9 +117,10 @@ class UCCTrainer:
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss
 
+                #TODO.x gradient clipping causes issues in training
                 # Gradient clipping (commenting this out as it is causing colab to crash!)
-                # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
-                # nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
+                nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
+                nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
 
                 # do optimizer step and zerograd for autoencoder model
                 self.ae_optimizer.step()
@@ -175,7 +176,7 @@ class UCCTrainer:
             need_to_save_model_checkpoint = (epoch + 1) % epoch_saver_count == 0
             if need_to_save_model_checkpoint:
                 print(f"Going to save model {self.name} @ Epoch:{epoch + 1}")
-                self.save_model_checkpoint_hook(epoch, avg_train_stats, avg_val_stats)
+                self.save_model_checkpoint_hook(epoch)
 
             print("-" * 60)
 
@@ -238,7 +239,7 @@ class UCCTrainer:
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float)
         encoded, decoded = self.autoencoder_model(
             batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
@@ -268,6 +269,10 @@ class UCCTrainer:
             self.train_correct_predictions += batch_correct_predictions
             self.train_total_batches += batch_size
         else:
+            print(f"ucc_loss: {ucc_loss}")
+            print(f"in this flow ucc_logits: {ucc_logits}")
+            print(f"ucc_probs: {ucc_probs}")
+            print(f"batch pred correct is {batch_correct_predictions}")
             self.eval_correct_predictions += batch_correct_predictions
             self.eval_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy
@@ -291,6 +296,7 @@ class UCCTrainer:
 
         return epoch_train_stats
 
+    #TODO.x here the val stats are very weird... got nan in a few places... not sure whats happening
     def validation_hook(self):
         # class level init
         self.eval_correct_predictions = 0
@@ -327,6 +333,7 @@ class UCCTrainer:
         avg_val_ae_loss = val_ae_loss / len(self.val_loader)
         avg_val_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
 
+        print("Finished computing val stats, now showing a sample reconstruction")
         # show some sample predictions
         self.show_sample_reconstructions(self.val_loader)
 
@@ -437,17 +444,21 @@ class UCCTrainer:
         self.autoencoder_model.eval()
 
         # Create a subplot grid
-        fig, axes = plt.subplots(1, 2, figsize=(9, 9))
+        fig, axes = plt.subplots(1, 2, figsize=(3, 3))
 
         with torch.no_grad():
             for val_data in dataloader:
                 val_images, _ = val_data
 
+                # Forward pass through the model
+                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
+
+                print("Got a sample reconstruction, now trying to reshape in order to show an example")
+
                 batch_size, bag_size, num_channels, height, width = val_images.size()
                 bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
 
-                # Forward pass through the model
-                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
+                print("Reshaped the original image into bag format")
 
                 # take only one image from the bag
                 sample_image = bag_val_images[0]

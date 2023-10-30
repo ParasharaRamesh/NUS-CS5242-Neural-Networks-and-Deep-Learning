@@ -195,7 +195,9 @@ class Dataset:
         total_bags = total_bags // self.bag_size
 
         # NOTE: we can technically pick more images before I am not enforcing that I am picking every image.
-        for b in tqdm(range(total_bags)):
+        #TODO.x remove this
+        # for b in tqdm(range(total_bags)):
+        for b in tqdm(range(10)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()
