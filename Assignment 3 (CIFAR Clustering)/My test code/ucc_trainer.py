@@ -1,3 +1,5 @@
+import torch
+
 from torch import nn, optim
 from tqdm.auto import tqdm
 import os
@@ -5,6 +7,7 @@ from params import *
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
 import torch.nn.functional as F
+
 
 class UCCTrainer:
     def __init__(self,
@@ -14,11 +17,11 @@ class UCCTrainer:
         self.save_dir = save_dir
         self.device = device
 
-        #data
+        # data
         self.train_loader = dataset.ucc_train_dataloader
         self.test_loader = dataset.ucc_test_dataloader
         self.val_loader = dataset.ucc_val_dataloader
-        self.kde_loaders = dataset.kde_test_dataloaders
+        self.kde_loaders = dataset.kde_test_dataloaders  # each dataloader here will return shape of (batch, bag, 3,32,32) of a pure dataset
         self.autoencoder_loaders = dataset.autoencoder_test_dataloaders
 
         # create the directory if it doesn't exist!
@@ -38,7 +41,7 @@ class UCCTrainer:
         self.ae_loss_criterion = nn.MSELoss()
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
 
-        #Transforms
+        # Transforms
         self.tensor_to_img_transform = transforms.ToPILImage()
 
         # Values which can change based on loaded checkpoint
@@ -446,7 +449,7 @@ class UCCTrainer:
                 sample_image = bag_val_images[0]
                 predicted_image = val_reconstructed_images[0]
 
-                #get it to cpu
+                # get it to cpu
                 sample_image = sample_image.to("cpu")
                 predicted_image = predicted_image.to("cpu")
 
@@ -488,7 +491,8 @@ class UCCTrainer:
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_decoded,
-                                                                                        test_one_hot_ucc_labels, False)
+                                                                                          test_one_hot_ucc_labels,
+                                                                                          False)
 
                 # calculate combined loss
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
@@ -515,11 +519,37 @@ class UCCTrainer:
         }
 
     def calculate_min_js_divergence(self):
-        '''
-        TODO.x use the kde loader and pass it through the encoder and the kde and get  the average and calculate js divergence
+        num_classes = len(self.kde_loaders)
+        kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
 
-        '''
-        pass
+        # find the average kde across all classes
+        for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
+            num_imgs_in_class = 0
+            for batch_idx, batch_data in tqdm(enumerate(pure_class_kde_loader)):
+                latent_features = self.autoencoder_model.encoder(batch_data)
+                batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
+                num_imgs_in_class += batch_kde_distributions.size(0)
+                kde_distributions = torch.sum(batch_kde_distributions, dim=0)
+                kde_per_class[class_idx] += kde_distributions
+            kde_per_class[class_idx] /= num_imgs_in_class
+
+        # find the js_divergence
+        min_divergence = torch.inf
+        best_i = None
+        best_j = None
+        for i in range(num_classes):
+            for j in range(i+1, num_classes):
+                divergence = self.js_divergence(kde_per_class[i], kde_per_class[j])
+                print(f"JS Divergence between {i} & {j} is {divergence}")
+                if divergence < min_divergence:
+                    min_divergence = divergence
+                    best_i = i
+                    best_j = j
+
+        print(f"Min JS Divergence is {min_divergence} between classes {best_i} & {best_j}")
+        #return the min divergence
+        return min_divergence
+
 
     def calculate_clustering_accuracy(self):
         '''

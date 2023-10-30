@@ -55,6 +55,11 @@ class Dataset:
                 transforms.RandomRotation(10),
                 transforms.ToTensor()
             ]),
+            transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.RandomRotation(14),
+                transforms.ToTensor()
+            ]),
             # random rotations & flips
             transforms.Compose([
                 transforms.ToPILImage(),
