@@ -10,9 +10,9 @@ import torch.nn.functional as F
 from sklearn import metrics
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
+from loss import *
 
-
-class UCCTrainer:
+class RCCTrainer:
     def __init__(self,
                  name, autoencoder_model, ucc_predictor_model, rcc_predictor_model,
                  dataset, save_dir, device=config.device):
@@ -44,7 +44,7 @@ class UCCTrainer:
                                         weight_decay=config.weight_decay)
 
         # Loss criterion(s)
-        self.ae_loss_criterion = nn.MSELoss()
+        self.ae_loss_criterion = SSIMLoss()
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
         self.rcc_loss_criterion = nn.MSELoss()
 
