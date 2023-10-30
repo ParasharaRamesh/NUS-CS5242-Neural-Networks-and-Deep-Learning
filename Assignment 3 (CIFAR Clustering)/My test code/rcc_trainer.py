@@ -598,7 +598,6 @@ class RCCTrainer:
         plt.tight_layout()
         plt.show()
 
-    # TODO.x
     def test_model(self):
         # class level init
         self.eval_ucc_correct_predictions = 0

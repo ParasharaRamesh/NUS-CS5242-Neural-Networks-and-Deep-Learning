@@ -56,9 +56,9 @@ def plot_ucc_model_stats(
 
 def plot_ucc_rcc_model_stats(
         experiment, epochs,
-        ucc_training_losses, ae_training_losses, rcc_training_losses, ucc_rcc_training_losses, combined_training_losses,
+        ucc_training_losses, ae_training_losses, rcc_training_losses, combined_training_losses,
         ucc_training_accuracy, rcc_training_accuracy,
-        ucc_validation_losses, ae_validation_losses, rcc_validation_losses, ucc_rcc_validation_losses, combined_validation_losses,
+        ucc_validation_losses, ae_validation_losses, rcc_validation_losses, combined_validation_losses,
         ucc_validation_accuracy, rcc_validation_accuracy
     ):
     fig, axes = plt.subplots(2, 2, figsize=(20, 20))
@@ -67,7 +67,6 @@ def plot_ucc_rcc_model_stats(
     axes[0, 0].plot(epochs, ucc_training_losses, marker="o", color="red", label="UCC Training Loss")
     axes[0, 0].plot(epochs, ae_training_losses, marker="o", color="blue", label="AE Training Loss")
     axes[0, 0].plot(epochs, rcc_training_losses, marker="o", color="yellow", label="RCC Training Loss")
-    axes[0, 0].plot(epochs, ucc_rcc_training_losses, marker="o", color="orange", label="UCC-RCC Training Loss")
     axes[0, 0].plot(epochs, combined_training_losses, marker="o", color="green", label="Combined Training Loss")
     axes[0, 0].set_title(f'{experiment}: Training Loss vs Epochs')
     axes[0, 0].set_xlabel('Epochs')
@@ -86,7 +85,6 @@ def plot_ucc_rcc_model_stats(
     axes[1, 0].plot(epochs, ucc_validation_losses, marker="o", color="red", label="UCC Validation Loss")
     axes[1, 0].plot(epochs, ae_validation_losses, marker="o", color="blue", label="AE Validation Loss")
     axes[1, 0].plot(epochs, rcc_validation_losses, marker="o", color="yellow", label="RCC Validation Loss")
-    axes[1, 0].plot(epochs, ucc_rcc_validation_losses, marker="o", color="orange", label="UCC-RCC Validation Loss")
     axes[1, 0].plot(epochs, combined_validation_losses, marker="o", color="green", label="Combined Validation Loss")
     axes[1, 0].set_title(f'{experiment}: Validation Loss vs Epochs')
     axes[1, 0].set_xlabel('Epochs')
