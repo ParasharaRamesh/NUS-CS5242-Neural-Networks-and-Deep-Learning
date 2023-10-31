@@ -61,9 +61,9 @@ Things to try:
 
 1. Change the dataset in the following manner:
 - change bag size to 12 (done)
-- try normalization (of the entire dataset)
+- try normalization (of the entire dataset) (done)
+- for each ucc ensure equal split and ensure that the images are in order and not in random order (done)
 - try normalization in the transforms
-- for each ucc ensure equal split and ensure that the images are in order and not in random order
 
 2. Check each model and ensure that you try xavier initialization or something (done)
 3. for encoder ensure that the final layer is sigmoid (done)
