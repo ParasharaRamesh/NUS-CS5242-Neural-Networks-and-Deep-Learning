@@ -117,10 +117,9 @@ class UCCTrainer:
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss
 
-                #TODO.x gradient clipping causes issues in training
                 # Gradient clipping (commenting this out as it is causing colab to crash!)
-                nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
-                nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
+                # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
+                # nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
 
                 # do optimizer step and zerograd for autoencoder model
                 self.ae_optimizer.step()
@@ -269,10 +268,6 @@ class UCCTrainer:
             self.train_correct_predictions += batch_correct_predictions
             self.train_total_batches += batch_size
         else:
-            print(f"ucc_loss: {ucc_loss}")
-            print(f"in this flow ucc_logits: {ucc_logits}")
-            print(f"ucc_probs: {ucc_probs}")
-            print(f"batch pred correct is {batch_correct_predictions}")
             self.eval_correct_predictions += batch_correct_predictions
             self.eval_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy

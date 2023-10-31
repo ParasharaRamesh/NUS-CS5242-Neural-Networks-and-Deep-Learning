@@ -31,6 +31,8 @@ class Dataset:
         self.rcc_limit = rcc_limit
         self.batch_size = batch_size
 
+        self.debug_bag_size = 48
+
         # transforms to apply
         self.transforms = [
             # normal
@@ -81,18 +83,20 @@ class Dataset:
         # converting it all into a tensor (it's not yet one hotified)
         self.x_train = torch.from_numpy(x_train).to(dtype=torch.float64)
         # normalizing the dataset, remove if it doesnt work
-        self.x_train = self.normalize(self.x_train)
+        # self.x_train = self.normalize(self.x_train)
         self.y_train = torch.from_numpy(y_train).to(dtype=torch.int64)
 
         self.x_test = torch.from_numpy(x_test).to(dtype=torch.float64)
         # normalizing the dataset, remove if it doesnt work
-        self.x_test = self.normalize(self.x_test)
+        # self.x_test = self.normalize(self.x_test)
         self.y_test = torch.from_numpy(y_test).to(dtype=torch.int64)
 
         self.x_val = torch.from_numpy(x_val).to(dtype=torch.float64)
         # normalizing the dataset, remove if it doesnt work
-        self.x_val = self.normalize(self.x_val)
+        # self.x_val = self.normalize(self.x_val)
         self.y_val = torch.from_numpy(y_val).to(dtype=torch.int64)
+
+        print("Converted numpy to torch tensors")
 
         # create subdatasets ([class_0_imgs, class_1_imgs,... class_9_imgs])
         self.train_sub_datasets = self.create_sub_datasets(self.x_train, self.y_train)
@@ -220,8 +224,8 @@ class Dataset:
         total_bags = total_bags // self.bag_size
 
         # NOTE: we can technically pick more images before I am not enforcing that I am picking every image.
-        # for b in tqdm(range(10)): # use this for local testing!
-        for b in tqdm(range(total_bags)):
+        for b in tqdm(range(self.debug_bag_size)): # use this for local testing!
+        # for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()
@@ -277,8 +281,8 @@ class Dataset:
             total_bags += len(sub_dataset)
         total_bags = total_bags // self.bag_size
 
-        # for b in tqdm(range(10)): # use this for local testing!
-        for b in tqdm(range(total_bags)):
+        for b in tqdm(range(self.debug_bag_size)): # use this for local testing!
+        # for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()

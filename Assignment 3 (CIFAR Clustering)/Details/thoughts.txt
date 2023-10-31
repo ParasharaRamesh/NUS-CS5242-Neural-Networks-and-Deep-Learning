@@ -53,9 +53,16 @@ feature size = J
 
 Troubles!:
 
-1. gradclip gave weird issue in colab
-2. unsigned char had to make everything into float
-3. val loss is giving nan
+1. gradclip gave weird issue in colab (X)
+2. unsigned char had to make everything into float (X)
+3. val loss is giving nan (X)
+4. val loss is too high , need to check if i am dividing correctly in the code
+5. val loss when appending to history is still a tensor need to use .item()
+5.2 plot code gives issues
+6. test loss is also too high , need to check
+7. js divergence and clustering code gives errors
+8. rcc model expects double when doing validation and not float during the validation hook phase.
+9. ?
 
 Things to try:
 
