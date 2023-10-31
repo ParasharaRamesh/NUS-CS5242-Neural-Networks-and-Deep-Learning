@@ -58,8 +58,8 @@ class Autoencoder(nn.Module):
             nn.Conv2d(24, 48, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 48, 4, 4]
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(48 * 16, 48 * 16),
-            nn.ReLU()
+            nn.Linear(48 * 16, 48 * 16, dtype=torch.float),
+            nn.Sigmoid()
         )
 
         self.decoder = nn.Sequential(
@@ -70,6 +70,11 @@ class Autoencoder(nn.Module):
             nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 3, 32, 32]
             nn.Sigmoid(),
         )
+
+        # Initialize weights using Xavier initialization with normal distribution
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+                nn.init.xavier_normal_(m.weight)
 
     def forward(self, x):
         x = x.to(torch.float)
@@ -91,13 +96,20 @@ class UCCPredictor(nn.Module):
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
             nn.ReLU(),
-            nn.Linear(2112, 256),
+            nn.Linear(2112, 256, dtype=torch.float),
+            nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(256, 32),
+            nn.Linear(256, 32, dtype=torch.float),
+            nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(32, ucc_limit),
+            nn.Linear(32, ucc_limit, dtype=torch.float),
             nn.Sigmoid()
         )
+
+        # Initialize weights using Xavier initialization with normal distribution
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+                nn.init.xavier_normal_(m.weight)
 
     def forward(self, x):
         kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
@@ -124,6 +136,11 @@ class RCCPredictor(nn.Module):
             nn.Linear(32, rcc_limit),
             nn.ReLU()
         )
+
+        # Initialize weights using Xavier initialization with normal distribution
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+                nn.init.xavier_normal_(m.weight)
 
     def forward(self, x):
         kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
