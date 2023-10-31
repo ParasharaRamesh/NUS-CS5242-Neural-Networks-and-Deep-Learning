@@ -130,8 +130,10 @@ class RCCPredictor(nn.Module):
             nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
             nn.ReLU(),
             nn.Linear(2112, 256),
+            nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(256, 32),
+            nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(32, rcc_limit),
             nn.ReLU()

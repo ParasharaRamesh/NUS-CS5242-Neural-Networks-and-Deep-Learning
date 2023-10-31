@@ -11,14 +11,14 @@ class Config:
     sigma = 0.1
     num_nodes = 11
 
-    learning_rate = 0.01
+    learning_rate = 0.02
     weight_decay = 1e-4
     grad_clip = 0.1
 
     batch_size = 2
     ucc_limit = 4
     rcc_limit = 10
-    bag_size = 10
+    bag_size = 12
 
 
 config = Config()
