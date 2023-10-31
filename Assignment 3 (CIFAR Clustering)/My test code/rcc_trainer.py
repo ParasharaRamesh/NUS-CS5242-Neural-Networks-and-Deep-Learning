@@ -283,7 +283,7 @@ class RCCTrainer:
         batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
         encoded, decoded = self.autoencoder_model(
             batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
-        ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded.to(torch.float64), batches_of_bag_images.to(torch.float64))  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
     # DONE

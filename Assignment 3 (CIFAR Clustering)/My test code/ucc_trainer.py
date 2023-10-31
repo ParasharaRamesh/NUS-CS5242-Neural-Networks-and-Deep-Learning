@@ -7,7 +7,6 @@ from params import *
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
 import torch.nn.functional as F
-from sklearn import metrics
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 
@@ -111,11 +110,8 @@ class UCCTrainer:
                 images, one_hot_ucc_labels = data
 
                 # calculate losses from both models for a batch of bags
-                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
+                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images, True)
                 ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(encoded, one_hot_ucc_labels, True)
-
-                # calculate combined loss
-                batch_loss = ae_loss + ucc_loss
 
                 # Gradient clipping (commenting this out as it is causing colab to crash!)
                 # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
@@ -132,6 +128,9 @@ class UCCTrainer:
                 # scheduler update (remove if it doesnt work!)
                 self.ae_scheduler.step()
                 self.ucc_scheduler.step()
+
+                # calculate combined loss
+                batch_loss = ae_loss + ucc_loss
 
                 # add to epoch batch_loss
                 epoch_training_loss += batch_loss.item()
@@ -234,7 +233,10 @@ class UCCTrainer:
             steps_per_epoch=len(self.train_loader)
         )
 
-    def forward_propagate_autoencoder(self, images):
+    def forward_propagate_autoencoder(self, images, is_train_mode=True):
+        if not is_train_mode:
+            #setting it to eval mode
+            self.autoencoder_model.eval()
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
@@ -242,9 +244,14 @@ class UCCTrainer:
         encoded, decoded = self.autoencoder_model(
             batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
+        ae_loss /= batch_size # to get the average ae loss per bag
         return ae_loss, encoded, decoded
 
     def forward_propogate_ucc(self, encoded, one_hot_ucc_labels, is_train_mode=True):
+        if not is_train_mode:
+            #setting it to eval mode
+            self.ucc_predictor_model.eval()
+
         # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
         batch_times_bag_size, feature_size = encoded.size()
         bag_size = config.bag_size
@@ -273,9 +280,10 @@ class UCCTrainer:
         return ucc_loss, batch_ucc_accuracy
 
     def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss):
-        avg_training_loss_for_epoch = epoch_training_loss / len(self.train_loader)
-        avg_ae_loss_for_epoch = epoch_ae_loss / len(self.train_loader)
-        avg_ucc_loss_for_epoch = epoch_ucc_loss / len(self.train_loader)
+        no_of_bags = len(self.train_loader) * config.batch_size
+        avg_training_loss_for_epoch = epoch_training_loss / no_of_bags
+        avg_ae_loss_for_epoch = epoch_ae_loss / no_of_bags
+        avg_ucc_loss_for_epoch = epoch_ucc_loss / no_of_bags
         avg_ucc_training_accuracy = self.train_correct_predictions / self.train_total_batches
 
         epoch_train_stats = {
@@ -301,16 +309,17 @@ class UCCTrainer:
         val_ae_loss = 0.0
         val_ucc_loss = 0.0
 
-        # set all models to eval mode
-        self.autoencoder_model.eval()
-        self.ucc_predictor_model.eval()
+        #NOTE: the model is set into eval mode in the forward propogation
+        # # set all models to eval mode
+        # self.autoencoder_model.eval()
+        # self.ucc_predictor_model.eval()
 
         with torch.no_grad():
             for val_batch_idx, val_data in enumerate(self.val_loader):
                 val_images, val_one_hot_ucc_labels = val_data
 
                 # calculate losses from both models for a batch of bags
-                val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
+                val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images, False)
                 val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_encoded,
                                                                                         val_one_hot_ucc_labels, False)
 
@@ -318,14 +327,15 @@ class UCCTrainer:
                 val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss
 
                 # cummulate the losses
-                val_ae_loss += val_batch_ae_loss
-                val_ucc_loss += val_batch_ucc_loss
-                val_loss += val_batch_loss
+                val_ae_loss += val_batch_ae_loss.item()
+                val_ucc_loss += val_batch_ucc_loss.item()
+                val_loss += val_batch_loss.item()
 
         # Calculate average validation loss for the epoch
-        avg_val_loss = val_loss / len(self.val_loader)
-        avg_val_ucc_loss = val_ucc_loss / len(self.val_loader)
-        avg_val_ae_loss = val_ae_loss / len(self.val_loader)
+        no_of_bags = len(self.val_loader) * config.batch_size
+        avg_val_loss = val_loss / no_of_bags
+        avg_val_ucc_loss = val_ucc_loss / no_of_bags
+        avg_val_ae_loss = val_ae_loss / no_of_bags
         avg_val_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
 
         print("Finished computing val stats, now showing a sample reconstruction")
@@ -436,7 +446,7 @@ class UCCTrainer:
         return os.path.join(directory, model_file)
 
     def show_sample_reconstructions(self, dataloader):
-        self.autoencoder_model.eval()
+        # self.autoencoder_model.eval()
 
         # Create a subplot grid
         fig, axes = plt.subplots(1, 2, figsize=(3, 3))
@@ -446,7 +456,7 @@ class UCCTrainer:
                 val_images, _ = val_data
 
                 # Forward pass through the model
-                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
+                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images, False)
 
                 print("Got a sample reconstruction, now trying to reshape in order to show an example")
 
@@ -468,11 +478,11 @@ class UCCTrainer:
                 predicted_image = self.tensor_to_img_transform(predicted_image)
 
                 axes[0].imshow(sample_image)
-                axes[0].set_title(f"Sample Original Image", color='green')
+                axes[0].set_title(f"Orig", color='green')
                 axes[0].axis('off')
 
                 axes[1].imshow(predicted_image)
-                axes[1].set_title(f"Sample Reconstructed Image", color='red')
+                axes[1].set_title(f"Recon", color='red')
                 axes[1].axis('off')
 
                 # show only one image
@@ -490,16 +500,17 @@ class UCCTrainer:
         test_ae_loss = 0.0
         test_ucc_loss = 0.0
 
-        # set all models to eval mode
-        self.autoencoder_model.eval()
-        self.ucc_predictor_model.eval()
+        #NOTE: the model is set into eval mode in the forward propogation
+        # # set all models to eval mode
+        # self.autoencoder_model.eval()
+        # self.ucc_predictor_model.eval()
 
         with torch.no_grad():
             for test_batch_idx, test_data in enumerate(self.test_loader):
                 test_images, test_one_hot_ucc_labels = test_data
 
                 # calculate losses from both models for a batch of bags
-                test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
+                test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images, False)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_encoded,
                                                                                           test_one_hot_ucc_labels,
                                                                                           False)
@@ -508,14 +519,15 @@ class UCCTrainer:
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
 
                 # cummulate the losses
-                test_ae_loss += test_batch_ae_loss
-                test_ucc_loss += test_batch_ucc_loss
-                test_loss += test_batch_loss
+                test_ae_loss += test_batch_ae_loss.item()
+                test_ucc_loss += test_batch_ucc_loss.item()
+                test_loss += test_batch_loss.item()
 
         # Calculate average validation loss for the epoch
-        avg_test_loss = test_loss / len(self.val_loader)
-        avg_test_ucc_loss = test_ucc_loss / len(self.val_loader)
-        avg_test_ae_loss = test_ae_loss / len(self.val_loader)
+        no_of_bags = len(self.test_loader) * config.batch_size
+        avg_test_loss = test_loss / no_of_bags
+        avg_test_ucc_loss = test_ucc_loss / no_of_bags
+        avg_test_ae_loss = test_ae_loss / no_of_bags
         avg_test_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
 
         # show some sample predictions

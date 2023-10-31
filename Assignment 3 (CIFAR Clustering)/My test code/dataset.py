@@ -46,52 +46,33 @@ class Dataset:
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor()
             ]),
-            # random vertical flips
-            transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomVerticalFlip(),
-                transforms.ToTensor()
-            ]),
             # random rotations
             transforms.Compose([
                 transforms.ToPILImage(),
-                transforms.RandomRotation(10),
+                transforms.RandomRotation(3),
                 transforms.ToTensor()
             ]),
             # random rotations & flips
             transforms.Compose([
                 transforms.ToPILImage(),
-                transforms.RandomRotation(10),
+                transforms.RandomRotation(3),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor()
-            ]),
-            transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomRotation(10),
-                transforms.RandomVerticalFlip(),
-                transforms.ToTensor()
-            ]),
-            transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomRotation(10),
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomVerticalFlip(),
-                transforms.ToTensor()
-            ]),
+            ])
         ]
 
         # converting it all into a tensor (it's not yet one hotified)
-        self.x_train = torch.from_numpy(x_train).to(dtype=torch.float64)
+        self.x_train = torch.from_numpy(x_train)
         # normalizing the dataset, remove if it doesnt work
         # self.x_train = self.normalize(self.x_train)
         self.y_train = torch.from_numpy(y_train).to(dtype=torch.int64)
 
-        self.x_test = torch.from_numpy(x_test).to(dtype=torch.float64)
+        self.x_test = torch.from_numpy(x_test)
         # normalizing the dataset, remove if it doesnt work
         # self.x_test = self.normalize(self.x_test)
         self.y_test = torch.from_numpy(y_test).to(dtype=torch.int64)
 
-        self.x_val = torch.from_numpy(x_val).to(dtype=torch.float64)
+        self.x_val = torch.from_numpy(x_val)
         # normalizing the dataset, remove if it doesnt work
         # self.x_val = self.normalize(self.x_val)
         self.y_val = torch.from_numpy(y_val).to(dtype=torch.int64)
@@ -199,7 +180,7 @@ class Dataset:
         random_idx = random.randint(0, sub_dataset_length - 1)
         random_img = sub_dataset[random_idx][0]
         random_img = random_img.permute((2, 0, 1))
-        # NOTE: maybe try not augmenting it at all!
+        # NOTE: Not augmenting it at all!
         if not is_eval:
             random_transform = random.choice(self.transforms)
             random_img = random_transform(random_img)
@@ -224,8 +205,8 @@ class Dataset:
         total_bags = total_bags // self.bag_size
 
         # NOTE: we can technically pick more images before I am not enforcing that I am picking every image.
-        for b in tqdm(range(self.debug_bag_size)): # use this for local testing!
-        # for b in tqdm(range(total_bags)):
+        for b in tqdm(range(self.debug_bag_size)):  # use this for local testing!
+            # for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()
@@ -281,8 +262,8 @@ class Dataset:
             total_bags += len(sub_dataset)
         total_bags = total_bags // self.bag_size
 
-        for b in tqdm(range(self.debug_bag_size)): # use this for local testing!
-        # for b in tqdm(range(total_bags)):
+        for b in tqdm(range(self.debug_bag_size)):  # use this for local testing!
+            # for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()
@@ -349,3 +330,6 @@ if __name__ == '__main__':
     y_test = splitted_dataset['y_test']
 
     dataset = Dataset(x_train, y_train, x_val, y_val, x_test, y_test)
+    print(f"Len of ucc_train is {len(dataset.ucc_train_dataloader)}")
+    print(f"Len of ucc_test is {len(dataset.ucc_test_dataloader)}")
+    print(f"Len of ucc_val is {len(dataset.ucc_val_dataloader)}")
