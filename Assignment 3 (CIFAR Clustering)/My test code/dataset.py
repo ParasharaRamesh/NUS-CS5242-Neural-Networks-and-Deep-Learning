@@ -74,12 +74,18 @@ class Dataset:
         # self.x_test, self.test_mu, self.test_std = self.normalize(self.x_test)
         self.y_test = torch.from_numpy(y_test).to(dtype=torch.int64)
 
+        # restricting x_val a lot more
+        # Generate random indices for sampling without replacement
+        random_indices = torch.randperm(len(x_test))
+        x_val = x_val[random_indices[:len(x_test)//10]]
+        y_val = y_val[random_indices[:len(x_test)//10]]
+
         self.x_val = torch.from_numpy(x_val).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
         # self.x_val, self.val_mu, self.val_std = self.normalize(self.x_val)
         self.y_val = torch.from_numpy(y_val).to(dtype=torch.int64)
 
-        #Dividing all images by 255 to get an image in range 0->1
+        # Dividing all images by 255 to get an image in range 0->1
         self.x_train /= 255
         self.x_test /= 255
         self.x_val /= 255
@@ -165,11 +171,12 @@ class Dataset:
             x_class = [torch.tensor(item).permute(2, 0, 1) for item in x[indices]]
             y_class = [torch.tensor(item) for item in y[indices]]
 
-            # Create a TensorDataset for the current class
-            class_dataset = TensorDataset(torch.stack(x_class), torch.stack(y_class))
+            if len(x_class) > 0 and len(y_class) > 0:
+                # Create a TensorDataset for the current class
+                class_dataset = TensorDataset(torch.stack(x_class), torch.stack(y_class))
 
-            # Append the current class dataset to the list
-            sub_datasets.append(class_dataset)
+                # Append the current class dataset to the list
+                sub_datasets.append(class_dataset)
         return sub_datasets
 
     # pick random image from ith class
