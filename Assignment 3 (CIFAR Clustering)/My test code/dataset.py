@@ -12,6 +12,7 @@ from params import *
 
 class Dataset:
     def __init__(self, x_train, y_train, x_val, y_val, x_test, y_test,
+                 debug=False, apply_augmentation=True,
                  batch_size=config.batch_size, bag_size=config.bag_size,
                  ucc_limit=config.ucc_limit, rcc_limit=config.rcc_limit
                  ):
@@ -30,8 +31,9 @@ class Dataset:
         self.ucc_limit = ucc_limit
         self.rcc_limit = rcc_limit
         self.batch_size = batch_size
-
+        self.debug = debug
         self.debug_bag_size = 12
+        self.apply_augmentation = apply_augmentation
 
         # transforms to apply
         self.transforms = [
@@ -62,20 +64,25 @@ class Dataset:
         ]
 
         # converting it all into a tensor (it's not yet one hotified)
-        self.x_train = torch.from_numpy(x_train).to(dtype=torch.float64)
+        self.x_train = torch.from_numpy(x_train).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
-        # self.x_train = self.normalize(self.x_train)
+        # self.x_train, self.train_mu, self.train_std = self.normalize(self.x_train)
         self.y_train = torch.from_numpy(y_train).to(dtype=torch.int64)
 
-        self.x_test = torch.from_numpy(x_test).to(dtype=torch.float64)
+        self.x_test = torch.from_numpy(x_test).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
-        # self.x_test = self.normalize(self.x_test)
+        # self.x_test, self.test_mu, self.test_std = self.normalize(self.x_test)
         self.y_test = torch.from_numpy(y_test).to(dtype=torch.int64)
 
-        self.x_val = torch.from_numpy(x_val).to(dtype=torch.float64)
+        self.x_val = torch.from_numpy(x_val).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
-        # self.x_val = self.normalize(self.x_val)
+        # self.x_val, self.val_mu, self.val_std = self.normalize(self.x_val)
         self.y_val = torch.from_numpy(y_val).to(dtype=torch.int64)
+
+        #Dividing all images by 255 to get an image in range 0->1
+        self.x_train /= 255
+        self.x_test /= 255
+        self.x_val /= 255
 
         print("Converted numpy to torch tensors")
 
@@ -98,14 +105,6 @@ class Dataset:
         self.ucc_rcc_train_dataloader, self.ucc_rcc_test_dataloader, self.ucc_rcc_val_dataloader = self.get_dataloaders_for_ucc_and_rcc()
 
         print("Initilized all dataloaders")
-
-    # normalize
-    def normalize(self, x):
-        x = torch.tensor(x, dtype=torch.float32).unsqueeze(1) / 255
-        x = (x - x.mean(dim=(2, 3), keepdim=True)) / x.std(
-            dim=(2, 3), keepdim=True
-        )
-        return x.squeeze()
 
     # create dataloaders
     def create_kde_dataloaders(self, sub_datasets):
@@ -179,11 +178,11 @@ class Dataset:
         sub_dataset = sub_datasets[i]
         sub_dataset_length = len(sub_dataset)
         random_idx = random.randint(0, sub_dataset_length - 1)
-        random_img = sub_dataset[random_idx][0].to(torch.float64)
-        if not is_eval:
+        random_img = sub_dataset[random_idx][0]
+        if self.apply_augmentation and not is_eval:
             random_transform = random.choice(self.transforms)
             random_img = random_transform(random_img)
-        return random_img
+        return random_img.to(torch.float32)
 
     # construct UCC dataset
     def construct_datasets_with_ucc(self):
@@ -202,10 +201,10 @@ class Dataset:
         for sub_dataset in sub_datasets:
             total_bags += len(sub_dataset)
         total_bags = total_bags // self.bag_size
+        loop = self.debug_bag_size if self.debug else total_bags
 
         # NOTE: we can technically pick more images before I am not enforcing that I am picking every image.
-        for b in tqdm(range(self.debug_bag_size)):  # use this for local testing!
-            # for b in tqdm(range(total_bags)):
+        for b in tqdm(range(loop)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1
             bag_tensor = self.create_bag()
@@ -260,8 +259,9 @@ class Dataset:
         for sub_dataset in sub_datasets:
             total_bags += len(sub_dataset)
         total_bags = total_bags // self.bag_size
+        loop = self.debug_bag_size if self.debug else total_bags
 
-        for b in tqdm(range(self.debug_bag_size)):  # use this for local testing!
+        for b in tqdm(range(loop)):  # use this for local testing!
             # for b in tqdm(range(total_bags)):
             # this will keep picking ucc (1 -> 4) in a cyclic manner
             ucc = (b % self.ucc_limit) + 1

@@ -15,7 +15,7 @@ class Config:
     weight_decay = 1e-4
     grad_clip = 0.1
 
-    batch_size = 2
+    batch_size = 1
     ucc_limit = 4
     rcc_limit = 10
     bag_size = 12

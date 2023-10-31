@@ -9,7 +9,7 @@ from torchvision.transforms import transforms
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
-
+from loss import *
 
 class UCCTrainer:
     def __init__(self,
@@ -41,7 +41,8 @@ class UCCTrainer:
                                         weight_decay=config.weight_decay)
 
         # Loss criterion(s)
-        self.ae_loss_criterion = nn.MSELoss()
+        # self.ae_loss_criterion = nn.MSELoss()
+        self.ae_loss_criterion = SSIMLoss()
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
 
         # Transforms
@@ -111,7 +112,7 @@ class UCCTrainer:
                 images, one_hot_ucc_labels = data
 
                 # calculate losses from both models for a batch of bags
-                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images, True)
+                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
                 ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(encoded, one_hot_ucc_labels, True)
 
                 # calculate combined loss
@@ -237,25 +238,17 @@ class UCCTrainer:
             steps_per_epoch=len(self.train_loader)
         )
 
-    def forward_propagate_autoencoder(self, images, is_train_mode=True):
-        if not is_train_mode:
-            # setting it to eval mode
-            self.autoencoder_model.eval()
+    def forward_propagate_autoencoder(self, images):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float64)
+        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
         encoded, decoded = self.autoencoder_model(
             batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
-        ae_loss /= bag_size  # to get the average ae loss per bag
         return ae_loss, encoded, decoded
 
     def forward_propogate_ucc(self, encoded, one_hot_ucc_labels, is_train_mode=True):
-        if not is_train_mode:
-            # setting it to eval mode
-            self.ucc_predictor_model.eval()
-
         # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
         batch_times_bag_size, feature_size = encoded.size()
         bag_size = config.bag_size
@@ -263,7 +256,7 @@ class UCCTrainer:
         encoded = encoded.view(batch_size, bag_size, feature_size)
         ucc_logits = self.ucc_predictor_model(encoded)
 
-        # compute the ucc_loss
+        # compute the ucc_loss between [batch, 4]
         ucc_loss = self.ucc_loss_criterion(ucc_logits, one_hot_ucc_labels)
 
         # compute the batch stats right here and save it
@@ -303,7 +296,6 @@ class UCCTrainer:
 
         return epoch_train_stats
 
-    # TODO.x here the val stats are very weird... got nan in a few places... not sure whats happening
     def validation_hook(self):
         # class level init
         self.eval_correct_predictions = 0
@@ -313,19 +305,19 @@ class UCCTrainer:
         val_ae_loss = 0.0
         val_ucc_loss = 0.0
 
-        # NOTE: the model is set into eval mode in the forward propogation
-        # # set all models to eval mode
-        # self.autoencoder_model.eval()
-        # self.ucc_predictor_model.eval()
-
         with torch.no_grad():
+            # set all models to eval mode
+            self.autoencoder_model.eval()
+            self.ucc_predictor_model.eval()
+
             for val_batch_idx, val_data in enumerate(self.val_loader):
                 val_images, val_one_hot_ucc_labels = val_data
 
                 # calculate losses from both models for a batch of bags
-                val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images, False)
+                val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
                 val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_encoded,
-                                                                                        val_one_hot_ucc_labels, False)
+                                                                                        val_one_hot_ucc_labels,
+                                                                                        False)
 
                 # calculate combined loss
                 val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss
@@ -430,71 +422,6 @@ class UCCTrainer:
         )
         print(f"Saved the model checkpoint for experiment {self.name} for epoch {epoch + 1}")
 
-    # find the most recent file and return the path
-    def get_model_checkpoint_path(self, epoch_num=None):
-        directory = os.path.join(self.save_dir, self.name)
-        if epoch_num == None:
-            # Get a list of all files in the directory
-            files = os.listdir(directory)
-
-            # Filter out only the files (exclude directories)
-            files = [f for f in files if os.path.isfile(os.path.join(directory, f))]
-
-            # Sort the files by their modification time in descending order (most recent first)
-            files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
-
-            # Get the name of the most recently added file
-            model_file = files[0] if files else None
-        else:
-            model_file = f"model_epoch_{epoch_num}.pt"
-        return os.path.join(directory, model_file)
-
-    def show_sample_reconstructions(self, dataloader):
-        # self.autoencoder_model.eval()
-
-        # Create a subplot grid
-        fig, axes = plt.subplots(1, 2, figsize=(3, 3))
-
-        with torch.no_grad():
-            for val_data in dataloader:
-                val_images, _ = val_data
-
-                # Forward pass through the model
-                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images, False)
-
-                print("Got a sample reconstruction, now trying to reshape in order to show an example")
-
-                batch_size, bag_size, num_channels, height, width = val_images.size()
-                bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
-
-                print("Reshaped the original image into bag format")
-
-                # take only one image from the bag
-                sample_image = bag_val_images[0]
-                predicted_image = val_reconstructed_images[0]
-
-                # get it to cpu
-                sample_image = sample_image.to("cpu")
-                predicted_image = predicted_image.to("cpu")
-
-                # convert to PIL Image
-                sample_image = self.tensor_to_img_transform(sample_image)
-                predicted_image = self.tensor_to_img_transform(predicted_image)
-
-                axes[0].imshow(sample_image)
-                axes[0].set_title(f"Orig", color='green')
-                axes[0].axis('off')
-
-                axes[1].imshow(predicted_image)
-                axes[1].set_title(f"Recon", color='red')
-                axes[1].axis('off')
-
-                # show only one image
-                break
-
-        plt.tight_layout()
-        plt.show()
-
     def test_model(self):
         # class level init
         self.eval_correct_predictions = 0
@@ -504,17 +431,16 @@ class UCCTrainer:
         test_ae_loss = 0.0
         test_ucc_loss = 0.0
 
-        # NOTE: the model is set into eval mode in the forward propogation
-        # # set all models to eval mode
-        # self.autoencoder_model.eval()
-        # self.ucc_predictor_model.eval()
-
         with torch.no_grad():
+            # set all models to eval mode
+            self.autoencoder_model.eval()
+            self.ucc_predictor_model.eval()
+
             for test_batch_idx, test_data in enumerate(self.test_loader):
                 test_images, test_one_hot_ucc_labels = test_data
 
                 # calculate losses from both models for a batch of bags
-                test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images, False)
+                test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_encoded,
                                                                                           test_one_hot_ucc_labels,
                                                                                           False)
@@ -543,6 +469,56 @@ class UCCTrainer:
             "avg_test_ucc_loss": avg_test_ucc_loss,
             "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
         }
+
+    def show_sample_reconstructions(self, dataloader):
+        # Create a subplot grid
+        fig, axes = plt.subplots(1, 2, figsize=(3, 3))
+
+        with torch.no_grad():
+            self.autoencoder_model.eval()
+
+            for val_data in dataloader:
+                val_images, _ = val_data
+
+                # Forward pass through the model
+                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
+
+                print("Got a sample reconstruction, now trying to reshape in order to show an example")
+
+                batch_size, bag_size, num_channels, height, width = val_images.size()
+                bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
+
+                print("Reshaped the original image into bag format")
+
+                # take only one image from the bag
+                sample_image = bag_val_images[0]
+                predicted_image = val_reconstructed_images[0]
+
+                # get it to cpu
+                sample_image = sample_image.to("cpu")
+                predicted_image = predicted_image.to("cpu")
+
+                #get it back to the range of 0->255
+                # sample_image *= 255
+                # predicted_image *= 255
+
+                # convert to PIL Image
+                sample_image = self.tensor_to_img_transform(sample_image)
+                predicted_image = self.tensor_to_img_transform(predicted_image)
+
+                axes[0].imshow(sample_image)
+                axes[0].set_title(f"Orig", color='green')
+                axes[0].axis('off')
+
+                axes[1].imshow(predicted_image)
+                axes[1].set_title(f"Recon", color='red')
+                axes[1].axis('off')
+
+                # show only one image
+                break
+
+        plt.tight_layout()
+        plt.show()
 
     def js_divergence(self, p, q):
         """
@@ -581,9 +557,9 @@ class UCCTrainer:
                 batch_size, bag_size, num_channels, height, width = images.size()
                 # reshaping to shape ( batch * bag, 3 ,32,32)
                 batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
-                    torch.float64)
+                    torch.float32)
                 latent_features = self.autoencoder_model.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
-                latent_features = latent_features.to(torch.float64)
+                latent_features = latent_features.to(torch.float32)
 
                 # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
                 batch_times_bag_size, feature_size = latent_features.size()
@@ -623,7 +599,7 @@ class UCCTrainer:
                 image, label = data
                 latent_features = self.autoencoder_model.encoder(image)  # shape (1, 48*16)
 
-                latent_features = latent_features.squeeze().detach().cpu().numpy() # ndarray shape (48*16)
+                latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (48*16)
                 label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
 
                 all_latent_features.append(latent_features)
@@ -659,3 +635,22 @@ class UCCTrainer:
 
         clustering_acc = ((1 - cost) * num_samples).sum() / num_samples.sum()
         return clustering_acc
+
+    # find the most recent file and return the path
+    def get_model_checkpoint_path(self, epoch_num=None):
+        directory = os.path.join(self.save_dir, self.name)
+        if epoch_num == None:
+            # Get a list of all files in the directory
+            files = os.listdir(directory)
+
+            # Filter out only the files (exclude directories)
+            files = [f for f in files if os.path.isfile(os.path.join(directory, f))]
+
+            # Sort the files by their modification time in descending order (most recent first)
+            files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
+
+            # Get the name of the most recently added file
+            model_file = files[0] if files else None
+        else:
+            model_file = f"model_epoch_{epoch_num}.pt"
+        return os.path.join(directory, model_file)

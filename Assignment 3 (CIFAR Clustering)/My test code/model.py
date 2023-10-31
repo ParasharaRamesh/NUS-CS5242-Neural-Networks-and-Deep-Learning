@@ -5,6 +5,49 @@ import numpy as np
 from params import *
 
 
+# Autoencoder
+class Autoencoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Input size: [batch, 3, 32, 32]
+        # Output size: [batch, 3, 32, 32]
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 12, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
+            # nn.BatchNorm2d(12),
+            nn.ReLU(),
+            nn.Conv2d(12, 24, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
+            # nn.BatchNorm2d(24),
+            nn.ReLU(),
+            nn.Conv2d(24, 48, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 48, 4, 4]
+            # nn.BatchNorm2d(48),
+            nn.Flatten(),
+            nn.Linear(48 * 16, 48 * 16, dtype=torch.float32),
+            nn.Sigmoid()
+        )
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
+            nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
+            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 3, 32, 32]
+            nn.Sigmoid()
+        )
+
+        # Initialize weights using Xavier initialization with normal distribution
+        # for m in self.modules():
+        #     if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+        #         nn.init.xavier_normal_(m.weight)
+        #         nn.init.constant_(m.bias, 0.1)
+
+        print("Autoencoder model initialized!")
+
+    def forward(self, x):
+        x = x.to(torch.float32)
+        encoded = self.encoder(x)
+        reshaped_encoded = encoded.view(-1, 48, 4, 4).to(torch.float32)
+        decoded = self.decoder(reshaped_encoded).to(torch.float32)
+        return encoded, decoded
+
 # KDE layer
 class KDE(nn.Module):
     def __init__(self, device=config.device, num_nodes=config.num_nodes, sigma=config.sigma):
@@ -44,46 +87,6 @@ class KDE(nn.Module):
         return concat_out  # shape is (Batch, J*num_nodes) -> (1, 8448)
 
 
-# Autoencoder
-class Autoencoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-        # Input size: [batch, 3, 32, 32]
-        # Output size: [batch, 3, 32, 32]
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 12, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 12, 16, 16]
-            nn.ReLU(),
-            nn.Conv2d(12, 24, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 24, 8, 8]
-            nn.ReLU(),
-            nn.Conv2d(24, 48, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 48, 4, 4]
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(48 * 16, 48 * 16, dtype=torch.float64),
-            nn.Sigmoid()
-        )
-
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 24, 8, 8]
-            nn.ReLU(),
-            nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 12, 16, 16]
-            nn.ReLU(),
-            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 3, 32, 32]
-            nn.Sigmoid(),
-        )
-
-        # Initialize weights using Xavier initialization with normal distribution
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.xavier_normal_(m.weight)
-
-    def forward(self, x):
-        x = x.to(torch.float64)
-        encoded = self.encoder(x)
-        reshaped_encoded = encoded.view(-1, 48, 4, 4).to(torch.float64)
-        decoded = self.decoder(reshaped_encoded).to(torch.float64)
-        return encoded, decoded
-
-
 # UCC Prediction model
 class UCCPredictor(nn.Module):
     def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
@@ -96,13 +99,13 @@ class UCCPredictor(nn.Module):
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
             nn.ReLU(),
-            nn.Linear(2112, 256, dtype=torch.float64),
+            nn.Linear(2112, 256, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(256, 32, dtype=torch.float64),
+            nn.Linear(256, 32, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float64),
+            nn.Linear(32, ucc_limit, dtype=torch.float32),
             nn.Sigmoid()
         )
 
@@ -110,6 +113,7 @@ class UCCPredictor(nn.Module):
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
                 nn.init.xavier_normal_(m.weight)
+                nn.init.constant_(m.bias, 0.1)
 
     def forward(self, x):
         kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)

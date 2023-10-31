@@ -132,6 +132,9 @@ class RCCTrainer:
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss + rcc_loss
 
+                # do loss backward for all losses
+                batch_loss.backward()
+
                 # Gradient clipping(causing colab to crash!)
                 # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
                 # nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
@@ -280,10 +283,10 @@ class RCCTrainer:
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
         encoded, decoded = self.autoencoder_model(
             batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
-        ae_loss = self.ae_loss_criterion(decoded.to(torch.float64), batches_of_bag_images.to(torch.float64))  # compares (Batch * Bag, 3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss, encoded, decoded
 
     # DONE
@@ -319,7 +322,6 @@ class RCCTrainer:
     '''
     NOTE: To improve this I can also add a rcc-ucc-enforcement loss where the number of unique classes should match the ucc exactly
     '''
-
     def forward_propogate_rcc(self, encoded, rcc_labels, is_train_mode=True):
         # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
         batch_times_bag_size, feature_size = encoded.size()
@@ -347,12 +349,12 @@ class RCCTrainer:
             self.eval_rcc_total_batches += batch_times_bag_size
         return rcc_loss, batch_rcc_accuracy
 
-    # DONE
     def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss, epoch_rcc_loss):
-        avg_training_loss_for_epoch = epoch_training_loss / len(self.train_loader)
-        avg_ae_loss_for_epoch = epoch_ae_loss / len(self.train_loader)
-        avg_ucc_loss_for_epoch = epoch_ucc_loss / len(self.train_loader)
-        avg_rcc_loss_for_epoch = epoch_rcc_loss / len(self.train_loader)
+        no_of_bags = len(self.train_loader) * config.batch_size
+        avg_training_loss_for_epoch = epoch_training_loss / no_of_bags
+        avg_ae_loss_for_epoch = epoch_ae_loss / no_of_bags
+        avg_ucc_loss_for_epoch = epoch_ucc_loss / no_of_bags
+        avg_rcc_loss_for_epoch = epoch_rcc_loss / no_of_bags
         avg_ucc_training_accuracy = self.train_ucc_correct_predictions / self.train_ucc_total_batches
         avg_rcc_training_accuracy = self.train_rcc_correct_predictions / self.train_rcc_total_batches
 
@@ -374,7 +376,6 @@ class RCCTrainer:
 
         return epoch_train_stats
 
-    # DONE
     def validation_hook(self):
         # class level init
         self.eval_ucc_correct_predictions = 0
@@ -388,12 +389,12 @@ class RCCTrainer:
         val_ucc_loss = 0.0
         val_rcc_loss = 0.0
 
-        # set all models to eval mode
-        self.autoencoder_model.eval()
-        self.ucc_predictor_model.eval()
-        self.rcc_predictor_model.eval()
-
         with torch.no_grad():
+            # set all models to eval mode
+            self.autoencoder_model.eval()
+            self.ucc_predictor_model.eval()
+            self.rcc_predictor_model.eval()
+
             for val_batch_idx, val_data in enumerate(self.val_loader):
                 val_images, val_one_hot_ucc_labels, val_rcc_labels = val_data
 
@@ -408,16 +409,17 @@ class RCCTrainer:
                 val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss + val_batch_rcc_loss
 
                 # cummulate the losses
-                val_loss += val_batch_loss
-                val_ae_loss += val_batch_ae_loss
-                val_ucc_loss += val_batch_ucc_loss
-                val_rcc_loss += val_batch_rcc_loss
+                val_loss += val_batch_loss.item()
+                val_ae_loss += val_batch_ae_loss.item()
+                val_ucc_loss += val_batch_ucc_loss.item()
+                val_rcc_loss += val_batch_rcc_loss.item()
 
         # Calculate average validation loss for the epoch
-        avg_val_loss = val_loss / len(self.val_loader)
-        avg_val_ucc_loss = val_ucc_loss / len(self.val_loader)
-        avg_val_rcc_loss = val_rcc_loss / len(self.val_loader)
-        avg_val_ae_loss = val_ae_loss / len(self.val_loader)
+        no_of_bags = len(self.val_loader) * config.batch_size
+        avg_val_loss = val_loss / no_of_bags
+        avg_val_ucc_loss = val_ucc_loss / no_of_bags
+        avg_val_ae_loss = val_ae_loss / no_of_bags
+        avg_val_rcc_loss = val_rcc_loss / no_of_bags
         avg_val_ucc_training_accuracy = self.eval_ucc_correct_predictions / self.eval_ucc_total_batches
         avg_val_rcc_training_accuracy = self.eval_rcc_correct_predictions / self.eval_rcc_total_batches
 
@@ -433,7 +435,6 @@ class RCCTrainer:
             "avg_val_rcc_training_accuracy": avg_val_rcc_training_accuracy
         }
 
-    # DONE
     def calculate_and_print_epoch_stats_hook(self, avg_train_stats, avg_val_stats):
         epoch_loss = avg_train_stats["avg_training_loss"]
         epoch_ae_loss = avg_train_stats["avg_ae_loss"]
@@ -469,7 +470,6 @@ class RCCTrainer:
             "epoch_val_rcc_acc": epoch_val_rcc_accuracy
         }
 
-    # DONE
     def store_running_history_hook(self, epoch, avg_train_stats, avg_val_stats):
         self.epoch_numbers.append(epoch + 1)
 
@@ -487,13 +487,11 @@ class RCCTrainer:
         self.val_ucc_accuracies.append(avg_val_stats["avg_val_ucc_training_accuracy"])
         self.val_rcc_accuracies.append(avg_val_stats["avg_val_rcc_training_accuracy"])
 
-    # DONE
     def get_current_running_history_state_hook(self):
         return self.epoch_numbers, \
             self.training_ae_losses, self.training_ucc_losses, self.training_rcc_losses, self.training_losses, self.training_ucc_accuracies, self.training_rcc_accuracies, \
             self.val_ae_losses, self.val_ucc_losses, self.val_rcc_losses, self.val_losses, self.val_ucc_accuracies, self.val_rcc_accuracies
 
-    # DONE
     def save_model_checkpoint_hook(self, epoch):
         # set it to train mode to save the weights (but doesn't matter apparently!)
         self.autoencoder_model.train()
@@ -533,69 +531,6 @@ class RCCTrainer:
         )
         print(f"Saved the model checkpoint for experiment {self.name} for epoch {epoch + 1}")
 
-    # DONE
-    # find the most recent file and return the path
-    def get_model_checkpoint_path(self, epoch_num=None):
-        directory = os.path.join(self.save_dir, self.name)
-        if epoch_num == None:
-            # Get a list of all files in the directory
-            files = os.listdir(directory)
-
-            # Filter out only the files (exclude directories)
-            files = [f for f in files if os.path.isfile(os.path.join(directory, f))]
-
-            # Sort the files by their modification time in descending order (most recent first)
-            files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
-
-            # Get the name of the most recently added file
-            model_file = files[0] if files else None
-        else:
-            model_file = f"model_epoch_{epoch_num}.pt"
-        return os.path.join(directory, model_file)
-
-    # DONE
-    def show_sample_reconstructions(self, dataloader):
-        self.autoencoder_model.eval()
-
-        # Create a subplot grid
-        fig, axes = plt.subplots(1, 2, figsize=(9, 9))
-
-        with torch.no_grad():
-            for val_data in dataloader:
-                val_images, _, _ = val_data
-
-                batch_size, bag_size, num_channels, height, width = val_images.size()
-                bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
-
-                # Forward pass through the model
-                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
-
-                # take only one image from the bag
-                sample_image = bag_val_images[0]
-                predicted_image = val_reconstructed_images[0]
-
-                # get it to cpu
-                sample_image = sample_image.to("cpu")
-                predicted_image = predicted_image.to("cpu")
-
-                # convert to PIL Image
-                sample_image = self.tensor_to_img_transform(sample_image)
-                predicted_image = self.tensor_to_img_transform(predicted_image)
-
-                axes[0].imshow(sample_image)
-                axes[0].set_title(f"Sample Original Image", color='green')
-                axes[0].axis('off')
-
-                axes[1].imshow(predicted_image)
-                axes[1].set_title(f"Sample Reconstructed Image", color='red')
-                axes[1].axis('off')
-
-                # show only one image
-                break
-
-        plt.tight_layout()
-        plt.show()
-
     def test_model(self):
         # class level init
         self.eval_ucc_correct_predictions = 0
@@ -609,12 +544,12 @@ class RCCTrainer:
         test_ucc_loss = 0.0
         test_rcc_loss = 0.0
 
-        # set all models to eval mode
-        self.autoencoder_model.eval()
-        self.ucc_predictor_model.eval()
-        self.rcc_predictor_model.eval()
-
         with torch.no_grad():
+            # set all models to eval mode
+            self.autoencoder_model.eval()
+            self.ucc_predictor_model.eval()
+            self.rcc_predictor_model.eval()
+
             for test_batch_idx, test_data in enumerate(self.test_loader):
                 test_images, test_one_hot_ucc_labels, test_rcc_labels = test_data
 
@@ -629,16 +564,17 @@ class RCCTrainer:
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss + test_batch_rcc_loss
 
                 # cummulate the losses
-                test_loss += test_batch_loss
-                test_ae_loss += test_batch_ae_loss
-                test_ucc_loss += test_batch_ucc_loss
-                test_rcc_loss += test_batch_rcc_loss
+                test_loss += test_batch_loss.item()
+                test_ae_loss += test_batch_ae_loss.item()
+                test_ucc_loss += test_batch_ucc_loss.item()
+                test_rcc_loss += test_batch_rcc_loss.item()
 
         # Calculate average validation loss for the epoch
-        avg_test_loss = test_loss / len(self.test_loader)
-        avg_test_ucc_loss = test_ucc_loss / len(self.test_loader)
-        avg_test_rcc_loss = test_rcc_loss / len(self.test_loader)
-        avg_test_ae_loss = test_ae_loss / len(self.test_loader)
+        no_of_bags = len(self.test_loader) * config.batch_size
+        avg_test_loss = test_loss / no_of_bags
+        avg_test_ucc_loss = test_ucc_loss / no_of_bags
+        avg_test_rcc_loss = test_rcc_loss / no_of_bags
+        avg_test_ae_loss = test_ae_loss / no_of_bags
         avg_test_ucc_training_accuracy = self.eval_ucc_correct_predictions / self.eval_ucc_total_batches
         avg_test_rcc_training_accuracy = self.eval_rcc_correct_predictions / self.eval_rcc_total_batches
 
@@ -654,7 +590,56 @@ class RCCTrainer:
             "avg_test_rcc_training_accuracy": avg_test_rcc_training_accuracy
         }
 
-    # DONE
+    def show_sample_reconstructions(self, dataloader):
+        # Create a subplot grid
+        fig, axes = plt.subplots(1, 2, figsize=(3, 3))
+
+        with torch.no_grad():
+            self.autoencoder_model.eval()
+
+            for val_data in dataloader:
+                val_images, _ = val_data
+
+                # Forward pass through the model
+                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
+
+                print("Got a sample reconstruction, now trying to reshape in order to show an example")
+
+                batch_size, bag_size, num_channels, height, width = val_images.size()
+                bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
+
+                print("Reshaped the original image into bag format")
+
+                # take only one image from the bag
+                sample_image = bag_val_images[0]
+                predicted_image = val_reconstructed_images[0]
+
+                # get it to cpu
+                sample_image = sample_image.to("cpu")
+                predicted_image = predicted_image.to("cpu")
+
+                #get it back to the range of 0->255
+                # sample_image *= 255
+                # predicted_image *= 255
+
+                # convert to PIL Image
+                sample_image = self.tensor_to_img_transform(sample_image)
+                predicted_image = self.tensor_to_img_transform(predicted_image)
+
+                axes[0].imshow(sample_image)
+                axes[0].set_title(f"Orig", color='green')
+                axes[0].axis('off')
+
+                axes[1].imshow(predicted_image)
+                axes[1].set_title(f"Recon", color='red')
+                axes[1].axis('off')
+
+                # show only one image
+                break
+
+        plt.tight_layout()
+        plt.show()
+
     def js_divergence(self, p, q):
         """
         Calculate the Jensen-Shannon Divergence between two probability distributions p and q.
@@ -678,7 +663,6 @@ class RCCTrainer:
 
         return js_divergence
 
-    # DONE
     def calculate_min_js_divergence(self):
         num_classes = len(self.kde_loaders)
         kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
@@ -686,12 +670,23 @@ class RCCTrainer:
         # find the average kde across all classes
         for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
             num_imgs_in_class = 0
-            for batch_idx, images in tqdm(enumerate(pure_class_kde_loader)):
+            for images in pure_class_kde_loader:
+                # get the first element
+                images = images[0]
                 # batch data is of shape ( Batch,bag, 3,32,32)
                 batch_size, bag_size, num_channels, height, width = images.size()
                 # reshaping to shape ( batch * bag, 3 ,32,32)
-                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
+                    torch.float32)
                 latent_features = self.autoencoder_model.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
+                latent_features = latent_features.to(torch.float32)
+
+                # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
+                batch_times_bag_size, feature_size = latent_features.size()
+                bag_size = config.bag_size
+                batch_size = batch_times_bag_size // bag_size
+                latent_features = latent_features.view(batch_size, bag_size, feature_size)
+
                 batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
                 num_imgs_in_class += batch_kde_distributions.size(0)
                 kde_distributions = torch.sum(batch_kde_distributions, dim=0)
@@ -715,7 +710,6 @@ class RCCTrainer:
         # return the min divergence
         return min_divergence
 
-    # DONE
     def calculate_clustering_accuracy(self):
         all_latent_features = []
         truth_labels_arr = []
@@ -725,18 +719,22 @@ class RCCTrainer:
                 image, label = data
                 latent_features = self.autoencoder_model.encoder(image)  # shape (1, 48*16)
 
-                latent_features = latent_features.squeeze().numpy()  # ndarray shape (48*16)
-                label = label.squeeze().numpy()  # ndarray shape (1)
+                latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (48*16)
+                label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
 
                 all_latent_features.append(latent_features)
-                truth_labels_arr.append(label)
+                truth_labels_arr.append(label.item())
 
         all_latent_features = np.array(all_latent_features)
+        truth_labels_arr = np.array(truth_labels_arr)
+        print("Got the latent features for all test images, now doing Kmeans")
 
         # Do kmeans fit
         estimator = KMeans(n_clusters=10, init='k-means++', n_init=10)
         estimator.fit(all_latent_features)
         predicted_clustering_labels = estimator.labels_
+
+        print("Got the kmeans predicted labels, now computing clustering accuracy")
 
         # Calculate accuracy
         cost_matrix = np.zeros((10, 10))
@@ -757,3 +755,22 @@ class RCCTrainer:
 
         clustering_acc = ((1 - cost) * num_samples).sum() / num_samples.sum()
         return clustering_acc
+
+    # find the most recent file and return the path
+    def get_model_checkpoint_path(self, epoch_num=None):
+        directory = os.path.join(self.save_dir, self.name)
+        if epoch_num == None:
+            # Get a list of all files in the directory
+            files = os.listdir(directory)
+
+            # Filter out only the files (exclude directories)
+            files = [f for f in files if os.path.isfile(os.path.join(directory, f))]
+
+            # Sort the files by their modification time in descending order (most recent first)
+            files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
+
+            # Get the name of the most recently added file
+            model_file = files[0] if files else None
+        else:
+            model_file = f"model_epoch_{epoch_num}.pt"
+        return os.path.join(directory, model_file)
