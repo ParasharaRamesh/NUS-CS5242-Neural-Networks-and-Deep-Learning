@@ -20,6 +20,7 @@ class UCCTrainer:
         self.device = device
 
         # data
+        self.dataset = dataset
         self.train_loader = dataset.ucc_train_dataloader
         self.test_loader = dataset.ucc_test_dataloader
         self.val_loader = dataset.ucc_val_dataloader
@@ -113,6 +114,12 @@ class UCCTrainer:
                 ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images, True)
                 ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(encoded, one_hot_ucc_labels, True)
 
+                # calculate combined loss
+                batch_loss = ae_loss + ucc_loss
+
+                # do loss backward for all losses
+                batch_loss.backward()
+
                 # Gradient clipping (commenting this out as it is causing colab to crash!)
                 # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
                 # nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
@@ -128,9 +135,6 @@ class UCCTrainer:
                 # scheduler update (remove if it doesnt work!)
                 self.ae_scheduler.step()
                 self.ucc_scheduler.step()
-
-                # calculate combined loss
-                batch_loss = ae_loss + ucc_loss
 
                 # add to epoch batch_loss
                 epoch_training_loss += batch_loss.item()
@@ -235,21 +239,21 @@ class UCCTrainer:
 
     def forward_propagate_autoencoder(self, images, is_train_mode=True):
         if not is_train_mode:
-            #setting it to eval mode
+            # setting it to eval mode
             self.autoencoder_model.eval()
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
-        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float)
+        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float64)
         encoded, decoded = self.autoencoder_model(
             batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
-        ae_loss /= batch_size # to get the average ae loss per bag
+        ae_loss /= bag_size  # to get the average ae loss per bag
         return ae_loss, encoded, decoded
 
     def forward_propogate_ucc(self, encoded, one_hot_ucc_labels, is_train_mode=True):
         if not is_train_mode:
-            #setting it to eval mode
+            # setting it to eval mode
             self.ucc_predictor_model.eval()
 
         # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
@@ -299,7 +303,7 @@ class UCCTrainer:
 
         return epoch_train_stats
 
-    #TODO.x here the val stats are very weird... got nan in a few places... not sure whats happening
+    # TODO.x here the val stats are very weird... got nan in a few places... not sure whats happening
     def validation_hook(self):
         # class level init
         self.eval_correct_predictions = 0
@@ -309,7 +313,7 @@ class UCCTrainer:
         val_ae_loss = 0.0
         val_ucc_loss = 0.0
 
-        #NOTE: the model is set into eval mode in the forward propogation
+        # NOTE: the model is set into eval mode in the forward propogation
         # # set all models to eval mode
         # self.autoencoder_model.eval()
         # self.ucc_predictor_model.eval()
@@ -500,7 +504,7 @@ class UCCTrainer:
         test_ae_loss = 0.0
         test_ucc_loss = 0.0
 
-        #NOTE: the model is set into eval mode in the forward propogation
+        # NOTE: the model is set into eval mode in the forward propogation
         # # set all models to eval mode
         # self.autoencoder_model.eval()
         # self.ucc_predictor_model.eval()
@@ -570,12 +574,23 @@ class UCCTrainer:
         # find the average kde across all classes
         for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
             num_imgs_in_class = 0
-            for batch_idx, images in tqdm(enumerate(pure_class_kde_loader)):
+            for images in pure_class_kde_loader:
+                # get the first element
+                images = images[0]
                 # batch data is of shape ( Batch,bag, 3,32,32)
                 batch_size, bag_size, num_channels, height, width = images.size()
                 # reshaping to shape ( batch * bag, 3 ,32,32)
-                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width)
+                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
+                    torch.float64)
                 latent_features = self.autoencoder_model.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
+                latent_features = latent_features.to(torch.float64)
+
+                # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
+                batch_times_bag_size, feature_size = latent_features.size()
+                bag_size = config.bag_size
+                batch_size = batch_times_bag_size // bag_size
+                latent_features = latent_features.view(batch_size, bag_size, feature_size)
+
                 batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
                 num_imgs_in_class += batch_kde_distributions.size(0)
                 kde_distributions = torch.sum(batch_kde_distributions, dim=0)
@@ -608,18 +623,22 @@ class UCCTrainer:
                 image, label = data
                 latent_features = self.autoencoder_model.encoder(image)  # shape (1, 48*16)
 
-                latent_features = latent_features.squeeze().numpy()  # ndarray shape (48*16)
-                label = label.squeeze().numpy()  # ndarray shape (1)
+                latent_features = latent_features.squeeze().detach().cpu().numpy() # ndarray shape (48*16)
+                label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
 
                 all_latent_features.append(latent_features)
-                truth_labels_arr.append(label)
+                truth_labels_arr.append(label.item())
 
         all_latent_features = np.array(all_latent_features)
+        truth_labels_arr = np.array(truth_labels_arr)
+        print("Got the latent features for all test images, now doing Kmeans")
 
         # Do kmeans fit
         estimator = KMeans(n_clusters=10, init='k-means++', n_init=10)
         estimator.fit(all_latent_features)
         predicted_clustering_labels = estimator.labels_
+
+        print("Got the kmeans predicted labels, now computing clustering accuracy")
 
         # Calculate accuracy
         cost_matrix = np.zeros((10, 10))
@@ -632,7 +651,8 @@ class UCCTrainer:
 
             for predicted_val in range(10):
                 temp_matching_pairs = np.where(temp_predicted_labels == predicted_val)[0]
-                cost_matrix[truth_val, predicted_val] = 1 - (temp_matching_pairs.shape[0] / temp_sample_indices.shape[0])
+                cost_matrix[truth_val, predicted_val] = 1 - (
+                        temp_matching_pairs.shape[0] / temp_sample_indices.shape[0])
 
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         cost = cost_matrix[row_ind, col_ind]

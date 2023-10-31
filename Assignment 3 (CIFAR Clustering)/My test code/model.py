@@ -51,23 +51,23 @@ class Autoencoder(nn.Module):
         # Input size: [batch, 3, 32, 32]
         # Output size: [batch, 3, 32, 32]
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 12, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 12, 16, 16]
+            nn.Conv2d(3, 12, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 12, 16, 16]
             nn.ReLU(),
-            nn.Conv2d(12, 24, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 24, 8, 8]
+            nn.Conv2d(12, 24, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 24, 8, 8]
             nn.ReLU(),
-            nn.Conv2d(24, 48, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 48, 4, 4]
+            nn.Conv2d(24, 48, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 48, 4, 4]
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(48 * 16, 48 * 16, dtype=torch.float),
+            nn.Linear(48 * 16, 48 * 16, dtype=torch.float64),
             nn.Sigmoid()
         )
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 24, 8, 8]
+            nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 24, 8, 8]
             nn.ReLU(),
-            nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 12, 16, 16]
+            nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 12, 16, 16]
             nn.ReLU(),
-            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1, dtype=torch.float),  # [batch, 3, 32, 32]
+            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1, dtype=torch.float64),  # [batch, 3, 32, 32]
             nn.Sigmoid(),
         )
 
@@ -77,10 +77,10 @@ class Autoencoder(nn.Module):
                 nn.init.xavier_normal_(m.weight)
 
     def forward(self, x):
-        x = x.to(torch.float)
+        x = x.to(torch.float64)
         encoded = self.encoder(x)
-        reshaped_encoded = encoded.view(-1, 48, 4, 4).to(torch.float)
-        decoded = self.decoder(reshaped_encoded).to(torch.float)
+        reshaped_encoded = encoded.view(-1, 48, 4, 4).to(torch.float64)
+        decoded = self.decoder(reshaped_encoded).to(torch.float64)
         return encoded, decoded
 
 
@@ -96,13 +96,13 @@ class UCCPredictor(nn.Module):
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
             nn.ReLU(),
-            nn.Linear(2112, 256, dtype=torch.float),
+            nn.Linear(2112, 256, dtype=torch.float64),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(256, 32, dtype=torch.float),
+            nn.Linear(256, 32, dtype=torch.float64),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float),
+            nn.Linear(32, ucc_limit, dtype=torch.float64),
             nn.Sigmoid()
         )
 

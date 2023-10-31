@@ -31,7 +31,7 @@ class Dataset:
         self.rcc_limit = rcc_limit
         self.batch_size = batch_size
 
-        self.debug_bag_size = 48
+        self.debug_bag_size = 12
 
         # transforms to apply
         self.transforms = [
@@ -62,17 +62,17 @@ class Dataset:
         ]
 
         # converting it all into a tensor (it's not yet one hotified)
-        self.x_train = torch.from_numpy(x_train)
+        self.x_train = torch.from_numpy(x_train).to(dtype=torch.float64)
         # normalizing the dataset, remove if it doesnt work
         # self.x_train = self.normalize(self.x_train)
         self.y_train = torch.from_numpy(y_train).to(dtype=torch.int64)
 
-        self.x_test = torch.from_numpy(x_test)
+        self.x_test = torch.from_numpy(x_test).to(dtype=torch.float64)
         # normalizing the dataset, remove if it doesnt work
         # self.x_test = self.normalize(self.x_test)
         self.y_test = torch.from_numpy(y_test).to(dtype=torch.int64)
 
-        self.x_val = torch.from_numpy(x_val)
+        self.x_val = torch.from_numpy(x_val).to(dtype=torch.float64)
         # normalizing the dataset, remove if it doesnt work
         # self.x_val = self.normalize(self.x_val)
         self.y_val = torch.from_numpy(y_val).to(dtype=torch.int64)
@@ -120,7 +120,7 @@ class Dataset:
 
             while pure_sub_dataset_idx < len(pure_sub_dataset):
                 # get the image from this pure sub dataset
-                img = pure_sub_dataset[pure_sub_dataset_idx][0].permute((2, 0, 1))
+                img = pure_sub_dataset[pure_sub_dataset_idx][0]
                 bag_idx = pure_sub_dataset_idx % self.bag_size
                 current_bag[bag_idx] = img
 
@@ -163,10 +163,11 @@ class Dataset:
             indices = torch.where(y == class_label)[0]
 
             # Extract data for the current class
-            x_class = x[indices]
+            x_class = [torch.tensor(item).permute(2, 0, 1) for item in x[indices]]
+            y_class = [torch.tensor(item) for item in y[indices]]
 
             # Create a TensorDataset for the current class
-            class_dataset = TensorDataset(x_class)
+            class_dataset = TensorDataset(torch.stack(x_class), torch.stack(y_class))
 
             # Append the current class dataset to the list
             sub_datasets.append(class_dataset)
@@ -178,9 +179,7 @@ class Dataset:
         sub_dataset = sub_datasets[i]
         sub_dataset_length = len(sub_dataset)
         random_idx = random.randint(0, sub_dataset_length - 1)
-        random_img = sub_dataset[random_idx][0]
-        random_img = random_img.permute((2, 0, 1))
-        # NOTE: Not augmenting it at all!
+        random_img = sub_dataset[random_idx][0].to(torch.float64)
         if not is_eval:
             random_transform = random.choice(self.transforms)
             random_img = random_transform(random_img)
