@@ -67,12 +67,7 @@ RCC yet to do
 
 Things to try:
 
-1. Change the dataset in the following manner:
-- change bag size to 12 (done)
-- try normalization (of the entire dataset) (done) (DIDNT WORK!)
-- for each ucc ensure equal split and ensure that the images are in order and not in random order (done)
-- try normalization in the transforms
-
-2. Check each model and ensure that you try xavier initialization or something (done)
-3. for encoder ensure that the final layer is sigmoid (done)
+1. first combine the RCC model and train it
+2. Then try to extract out the kde model seperately
+3. beef up the model
 

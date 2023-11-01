@@ -48,6 +48,7 @@ class Autoencoder(nn.Module):
         decoded = self.decoder(reshaped_encoded).to(torch.float32)
         return encoded, decoded
 
+
 # KDE layer
 class KDE(nn.Module):
     def __init__(self, device=config.device, num_nodes=config.num_nodes, sigma=config.sigma):
@@ -55,6 +56,7 @@ class KDE(nn.Module):
         self.num_nodes = num_nodes
         self.sigma = sigma
         self.device = device
+        print("KDE Layer initialized")
 
     def forward(self, data):
         batch_size, bag_size, num_features = data.size()  # Batch, bag, J
@@ -115,10 +117,39 @@ class UCCPredictor(nn.Module):
                 nn.init.xavier_normal_(m.weight)
                 nn.init.constant_(m.bias, 0.1)
 
+        print("UCC Predictor model initialized")
+
     def forward(self, x):
         kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
         ucc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 4)
         return ucc_logits
+
+
+# Combined UCC model
+class CombinedUCCModel(nn.Module):
+    def __init__(self, device=config.device):
+        super().__init__()
+        self.autoencoder = Autoencoder()
+        self.ucc_predictor = UCCPredictor(device)
+        print("Combined UCC model initialized")
+
+    def forward(self, batch):
+        # Input size: [batch, bag, 3, 32, 32]
+        # output size: [batch, 4] (ucc_logits), [batch * bag,3,32,32] ( decoded images)
+
+        # Stage 1. pass through autoencoder
+        batch_size, bag_size, num_channels, height, width = batch.size()
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        encoded, decoded = self.autoencoder(
+            batches_of_image_bags
+        )  # we are feeding in Batch*bag images of shape (3,32,32)
+
+        # Stage 2. use the autoencoder latent features to pass through the ucc predictor
+        batches_of_image_bags, feature_size = encoded.size()
+        encoded = encoded.view(batch_size, bag_size, feature_size)
+        ucc_logits = self.ucc_predictor(encoded)
+
+        return ucc_logits, decoded
 
 
 # RCC Prediction model
@@ -154,6 +185,33 @@ class RCCPredictor(nn.Module):
         return rcc_logits
 
 
+# Combined RCC model
+class CombinedRCCModel(nn.Module):
+    def __init__(self, device=config.device):
+        super().__init__()
+        self.autoencoder = Autoencoder()
+        self.ucc_predictor = UCCPredictor(device)
+        self.rcc_predictor = RCCPredictor(device)
+
+    def forward(self, batch):
+        # Input size: [batch, bag, 3, 32, 32]
+        # output size: [batch, 4] (ucc_logits), [batch, 10] (rcc_logits), [batch * bag,3,32,32] ( decoded images)
+
+        # Stage 1. pass through autoencoder
+        batch_size, bag_size, num_channels, height, width = batch.size()
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        encoded, decoded = self.autoencoder(
+            batches_of_image_bags
+        )  # we are feeding in Batch*bag images of shape (3,32,32)
+
+        # Stage 2. use the autoencoder latent features to pass through the ucc predictor
+        batches_of_image_bags, feature_size = encoded.size()
+        encoded = encoded.view(batch_size, bag_size, feature_size)
+        ucc_logits = self.ucc_predictor(encoded)
+        rcc_logits = self.rcc_predictor(encoded)
+        return rcc_logits, ucc_logits, decoded
+
+
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -171,7 +229,17 @@ if __name__ == '__main__':
     # summary(ucc_predictor, input_size=(10, 48 * 16), device=device, batch_dim=0,
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
+    # Combined UCC model
+    # combined_ucc = CombinedUCCModel(device).to(device)
+    # summary(combined_ucc, input_size=(12, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+
     # RCC layer test
     # rcc_predictor = RCCPredictor(device).to(device)
     # summary(rcc_predictor, input_size=(10, 48 * 16), device=device, batch_dim=0,
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+
+
+    #Combined RCC model
+    # combined_rcc = CombinedRCCModel(device).to(device)
+    # summary(combined_rcc, input_size=(12, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+

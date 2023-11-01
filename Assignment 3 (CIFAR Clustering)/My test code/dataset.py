@@ -32,7 +32,7 @@ class Dataset:
         self.rcc_limit = rcc_limit
         self.batch_size = batch_size
         self.debug = debug
-        self.debug_bag_size = 12
+        self.debug_bag_size = 6
         self.apply_augmentation = apply_augmentation
 
         # transforms to apply
@@ -67,12 +67,12 @@ class Dataset:
         self.x_train = torch.from_numpy(x_train).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
         # self.x_train, self.train_mu, self.train_std = self.normalize(self.x_train)
-        self.y_train = torch.from_numpy(y_train).to(dtype=torch.int64)
+        self.y_train = torch.from_numpy(y_train).to(dtype=torch.float32)
 
         self.x_test = torch.from_numpy(x_test).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
         # self.x_test, self.test_mu, self.test_std = self.normalize(self.x_test)
-        self.y_test = torch.from_numpy(y_test).to(dtype=torch.int64)
+        self.y_test = torch.from_numpy(y_test).to(dtype=torch.float32)
 
         # restricting x_val a lot more
         # Generate random indices for sampling without replacement
@@ -83,7 +83,7 @@ class Dataset:
         self.x_val = torch.from_numpy(x_val).to(dtype=torch.float32)
         # normalizing the dataset, remove if it doesnt work
         # self.x_val, self.val_mu, self.val_std = self.normalize(self.x_val)
-        self.y_val = torch.from_numpy(y_val).to(dtype=torch.int64)
+        self.y_val = torch.from_numpy(y_val).to(dtype=torch.float32)
 
         # Dividing all images by 255 to get an image in range 0->1
         self.x_train /= 255
@@ -304,7 +304,7 @@ class Dataset:
 
             bag_tensors.append(torch.stack(bag_tensor))
             ucc_tensors.append(self.one_hot(ucc, self.ucc_limit))
-            rcc_tensors.append(torch.tensor(rcc_tensor))
+            rcc_tensors.append(torch.tensor(rcc_tensor).to(torch.float32))
 
         return TensorDataset(
             torch.stack(bag_tensors),
@@ -319,7 +319,7 @@ class Dataset:
 
         # since each label is in range of [1,10] getting it to a range of [0,9]
         one_hot[label - 1] = 1
-        return one_hot
+        return one_hot.to(torch.float32)
 
     def create_bag(self):
         return [None] * self.bag_size

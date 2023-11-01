@@ -12,9 +12,10 @@ from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 from loss import *
 
+
 class RCCTrainer:
     def __init__(self,
-                 name, autoencoder_model, ucc_predictor_model, rcc_predictor_model,
+                 name, rcc_model,
                  dataset, save_dir, device=config.device):
         self.name = name
         self.save_dir = save_dir
@@ -31,16 +32,10 @@ class RCCTrainer:
         os.makedirs(self.save_dir, exist_ok=True)
         os.makedirs(os.path.join(self.save_dir, self.name), exist_ok=True)
 
-        self.autoencoder_model = autoencoder_model
-        self.ucc_predictor_model = ucc_predictor_model
-        self.rcc_predictor_model = rcc_predictor_model
+        self.rcc_model = rcc_model
 
         # Adam optimizer(s)
-        self.ae_optimizer = optim.Adam(self.autoencoder_model.parameters(), lr=config.learning_rate,
-                                       weight_decay=config.weight_decay)
-        self.ucc_optimizer = optim.Adam(self.ucc_predictor_model.parameters(), lr=config.learning_rate,
-                                        weight_decay=config.weight_decay)
-        self.rcc_optimizer = optim.Adam(self.rcc_predictor_model.parameters(), lr=config.learning_rate,
+        self.rcc_optimizer = optim.Adam(self.rcc_model.parameters(), lr=config.learning_rate,
                                         weight_decay=config.weight_decay)
 
         # Loss criterion(s)
@@ -110,9 +105,7 @@ class RCCTrainer:
             )
 
             # set all models to train mode
-            self.autoencoder_model.train()
-            self.ucc_predictor_model.train()
-            self.rcc_predictor_model.train()
+            self.rcc_model.train()
 
             # set the epoch training batch_loss
             epoch_training_loss = 0.0
@@ -124,10 +117,13 @@ class RCCTrainer:
             for batch_idx, data in enumerate(self.train_loader):
                 images, one_hot_ucc_labels, rcc_labels = data
 
+                # forward propogate through the combined model
+                rcc_logits, ucc_logits, decoded = self.rcc_model(images)
+
                 # calculate losses from both models for a batch of bags
-                ae_loss, encoded, decoded = self.forward_propagate_autoencoder(images)
-                ucc_loss, batch_ucc_accuracy = self.forward_propogate_ucc(encoded, one_hot_ucc_labels, True)
-                rcc_loss, batch_rcc_accuracy = self.forward_propogate_rcc(encoded, rcc_labels, True)
+                ae_loss = self.calculate_autoencoder_loss(images, decoded)
+                ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, one_hot_ucc_labels, True)
+                rcc_loss, batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(rcc_logits, rcc_labels, True)
 
                 # calculate combined loss
                 batch_loss = ae_loss + ucc_loss + rcc_loss
@@ -136,25 +132,13 @@ class RCCTrainer:
                 batch_loss.backward()
 
                 # Gradient clipping(causing colab to crash!)
-                # nn.utils.clip_grad_value_(self.autoencoder_model.parameters(), config.grad_clip)
-                # nn.utils.clip_grad_value_(self.ucc_predictor_model.parameters(), config.grad_clip)
-                # nn.utils.clip_grad_value_(self.rcc_predictor_model.parameters(), config.grad_clip)
+                nn.utils.clip_grad_value_(self.rcc_model.parameters(), config.grad_clip)
 
-                # do optimizer step and zerograd for autoencoder model
-                self.ae_optimizer.step()
-                self.ae_optimizer.zero_grad()
-
-                # do optimizer step and zerograd for ucc model
-                self.ucc_optimizer.step()
-                self.ucc_optimizer.zero_grad()
-
-                # do optimizer step and zerograd for rcc model
+                # do optimizer step and zerograd
                 self.rcc_optimizer.step()
                 self.rcc_optimizer.zero_grad()
 
                 # scheduler update (remove if it doesnt work!)
-                self.ae_scheduler.step()
-                self.ucc_scheduler.step()
                 self.rcc_scheduler.step()
 
                 # add to epoch batch_loss
@@ -222,13 +206,9 @@ class RCCTrainer:
             checkpoint = torch.load(checkpoint_path)
 
             # load previous state of models
-            self.autoencoder_model.load_state_dict(checkpoint['ae_model_state_dict'])
-            self.ucc_predictor_model.load_state_dict(checkpoint['ucc_model_state_dict'])
-            self.rcc_predictor_model.load_state_dict(checkpoint['rcc_model_state_dict'])
+            self.rcc_model.load_state_dict(checkpoint['rcc_model_state_dict'])
 
             # load previous state of optimizers
-            self.ae_optimizer.load_state_dict(checkpoint['ae_optimizer_state_dict'])
-            self.ucc_optimizer.load_state_dict(checkpoint['ucc_optimizer_state_dict'])
             self.rcc_optimizer.load_state_dict(checkpoint['rcc_optimizer_state_dict'])
 
             # Things we are keeping track of
@@ -253,24 +233,6 @@ class RCCTrainer:
 
     # DONE
     def init_scheduler_hook(self, num_epochs):
-        # steps per epoch here is multiplied with bag size as we are doing it at an image level
-        self.ae_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            self.ae_optimizer,
-            config.learning_rate,
-            epochs=num_epochs,
-            steps_per_epoch=len(self.train_loader)
-            # steps_per_epoch=len(self.train_loader) * config.bag_size # this is only if I decide to go image by image level loss as opposed to bag level loss
-        )
-
-        # here we are doing it at a bag level
-        self.ucc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            self.ucc_optimizer,
-            config.learning_rate,
-            epochs=num_epochs,
-            steps_per_epoch=len(self.train_loader)
-        )
-
-        # here we are doing it at a bag level
         self.rcc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.rcc_optimizer,
             config.learning_rate,
@@ -279,26 +241,17 @@ class RCCTrainer:
         )
 
     # DONE
-    def forward_propagate_autoencoder(self, images):
+    def calculate_autoencoder_loss(self, images, decoded):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
         batch_size, bag_size, num_channels, height, width = images.size()
         batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
-        encoded, decoded = self.autoencoder_model(
-            batches_of_bag_images)  # we are feeding in Batch*bag images of shape (3,32,32)
         ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
-        return ae_loss, encoded, decoded
+        return ae_loss
 
     # DONE
-    def forward_propogate_ucc(self, encoded, one_hot_ucc_labels, is_train_mode=True):
-        # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-        batch_times_bag_size, feature_size = encoded.size()
-        bag_size = config.bag_size
-        batch_size = batch_times_bag_size // bag_size
-        encoded = encoded.view(batch_size, bag_size, feature_size)
-        ucc_logits = self.ucc_predictor_model(encoded)
-
-        # compute the ucc_loss
+    def calculate_ucc_loss_and_acc(self, ucc_logits, one_hot_ucc_labels, is_train_mode=True):
+        # compute the ucc_loss between [batch, 4]
         ucc_loss = self.ucc_loss_criterion(ucc_logits, one_hot_ucc_labels)
 
         # compute the batch stats right here and save it
@@ -322,16 +275,13 @@ class RCCTrainer:
     '''
     NOTE: To improve this I can also add a rcc-ucc-enforcement loss where the number of unique classes should match the ucc exactly
     '''
-    def forward_propogate_rcc(self, encoded, rcc_labels, is_train_mode=True):
-        # decoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-        batch_times_bag_size, feature_size = encoded.size()
-        bag_size = config.bag_size
-        batch_size = batch_times_bag_size // bag_size
-        encoded = encoded.view(batch_size, bag_size, feature_size)
-        rcc_logits = self.rcc_predictor_model(encoded) #Predicts (Batch, rcc length)
+
+    def calculate_rcc_loss_and_acc(self, rcc_logits, rcc_labels, is_train_mode=True):
+        # compute the rcc_loss between [batch, 10] ( as there are 10 classes)
+        batch_times_bag_size = config.batch_size * config.bag_size
 
         # round it to the nearest integer
-        predicted = torch.round(rcc_logits)
+        predicted = torch.round(rcc_logits).to(torch.float32)
 
         # compute the rcc_loss
         rcc_loss = self.rcc_loss_criterion(rcc_logits, rcc_labels)
@@ -391,19 +341,22 @@ class RCCTrainer:
 
         with torch.no_grad():
             # set all models to eval mode
-            self.autoencoder_model.eval()
-            self.ucc_predictor_model.eval()
-            self.rcc_predictor_model.eval()
+            self.rcc_model.eval()
 
             for val_batch_idx, val_data in enumerate(self.val_loader):
                 val_images, val_one_hot_ucc_labels, val_rcc_labels = val_data
 
+                # forward propogate through the model
+                val_rcc_logits, val_ucc_logits, val_decoded = self.rcc_model(val_images)
+
                 # calculate losses from both models for a batch of bags
-                val_batch_ae_loss, val_encoded, val_decoded = self.forward_propagate_autoencoder(val_images)
-                val_batch_ucc_loss, val_batch_ucc_accuracy = self.forward_propogate_ucc(val_encoded,
-                                                                                        val_one_hot_ucc_labels, False)
-                val_batch_rcc_loss, val_batch_rcc_accuracy = self.forward_propogate_rcc(val_encoded, val_rcc_labels,
-                                                                                        False)
+                val_batch_ae_loss = self.calculate_autoencoder_loss(val_images, val_decoded)
+                val_batch_ucc_loss, val_batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(val_ucc_logits,
+                                                                                             val_one_hot_ucc_labels,
+                                                                                             False)
+                val_batch_rcc_loss, val_batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(val_rcc_logits,
+                                                                                             val_rcc_labels,
+                                                                                             False)
 
                 # calculate combined loss
                 val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss + val_batch_rcc_loss
@@ -494,9 +447,7 @@ class RCCTrainer:
 
     def save_model_checkpoint_hook(self, epoch):
         # set it to train mode to save the weights (but doesn't matter apparently!)
-        self.autoencoder_model.train()
-        self.ucc_predictor_model.train()
-        self.rcc_predictor_model.train()
+        self.rcc_model.train()
 
         # create the directory if it doesn't exist
         model_save_directory = os.path.join(self.save_dir, self.name)
@@ -506,11 +457,7 @@ class RCCTrainer:
         checkpoint_path = os.path.join(model_save_directory, f'model_epoch_{epoch + 1}.pt')
         torch.save(
             {
-                'ae_model_state_dict': self.autoencoder_model.state_dict(),
-                'ucc_model_state_dict': self.ucc_predictor_model.state_dict(),
-                'rcc_model_state_dict': self.rcc_predictor_model.state_dict(),
-                'ae_optimizer_state_dict': self.ae_optimizer.state_dict(),
-                'ucc_optimizer_state_dict': self.ucc_optimizer.state_dict(),
+                'rcc_model_state_dict': self.rcc_model.state_dict(),
                 'rcc_optimizer_state_dict': self.rcc_optimizer.state_dict(),
                 'epoch': epoch + 1,
                 'epoch_numbers': self.epoch_numbers,
@@ -546,19 +493,22 @@ class RCCTrainer:
 
         with torch.no_grad():
             # set all models to eval mode
-            self.autoencoder_model.eval()
-            self.ucc_predictor_model.eval()
-            self.rcc_predictor_model.eval()
+            self.rcc_model.eval()
 
             for test_batch_idx, test_data in enumerate(self.test_loader):
                 test_images, test_one_hot_ucc_labels, test_rcc_labels = test_data
 
+                # forward propogate through the model
+                test_rcc_logits, test_ucc_logits, test_decoded = self.rcc_model(test_images)
+
                 # calculate losses from both models for a batch of bags
-                test_batch_ae_loss, test_encoded, test_decoded = self.forward_propagate_autoencoder(test_images)
-                test_batch_ucc_loss, test_batch_ucc_accuracy = self.forward_propogate_ucc(test_encoded,
-                                                                                        test_one_hot_ucc_labels, False)
-                test_batch_rcc_loss, test_batch_rcc_accuracy = self.forward_propogate_rcc(test_encoded, test_rcc_labels,
-                                                                                        False)
+                test_batch_ae_loss = self.calculate_autoencoder_loss(test_images, test_decoded)
+                test_batch_ucc_loss, test_batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(test_ucc_logits,
+                                                                                               test_one_hot_ucc_labels,
+                                                                                               False)
+                test_batch_rcc_loss, test_batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(test_rcc_logits,
+                                                                                               test_rcc_labels,
+                                                                                               False)
 
                 # calculate combined loss
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss + test_batch_rcc_loss
@@ -595,20 +545,20 @@ class RCCTrainer:
         fig, axes = plt.subplots(1, 2, figsize=(3, 3))
 
         with torch.no_grad():
-            self.autoencoder_model.eval()
+            # set all models to eval mode
+            self.rcc_model.eval()
 
             for val_data in dataloader:
-                val_images, _ = val_data
+                val_images, _, _ = val_data
 
-                # Forward pass through the model
-                _, _, val_reconstructed_images = self.forward_propagate_autoencoder(val_images)
-
-                print("Got a sample reconstruction, now trying to reshape in order to show an example")
-
+                # reshape to appropriate size
                 batch_size, bag_size, num_channels, height, width = val_images.size()
                 bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
-
                 print("Reshaped the original image into bag format")
+
+                # forward propagate through the model
+                _, _, val_reconstructed_images = self.rcc_model(val_images)
+                print("Got a sample reconstruction, now trying to reshape in order to show an example")
 
                 # take only one image from the bag
                 sample_image = bag_val_images[0]
@@ -617,10 +567,6 @@ class RCCTrainer:
                 # get it to cpu
                 sample_image = sample_image.to("cpu")
                 predicted_image = predicted_image.to("cpu")
-
-                #get it back to the range of 0->255
-                # sample_image *= 255
-                # predicted_image *= 255
 
                 # convert to PIL Image
                 sample_image = self.tensor_to_img_transform(sample_image)
@@ -669,29 +615,36 @@ class RCCTrainer:
 
         # find the average kde across all classes
         for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
-            num_imgs_in_class = 0
+            num_bags_in_class = 0
             for images in pure_class_kde_loader:
                 # get the first element
                 images = images[0]
+
+                # Stage.1 pass through the encoder to get the latent features
                 # batch data is of shape ( Batch,bag, 3,32,32)
                 batch_size, bag_size, num_channels, height, width = images.size()
                 # reshaping to shape ( batch * bag, 3 ,32,32)
                 batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
                     torch.float32)
-                latent_features = self.autoencoder_model.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
+                latent_features = self.rcc_model.autoencoder.encoder(
+                    batches_of_bag_images)  # shape (Batch * bag, 48*16)
                 latent_features = latent_features.to(torch.float32)
 
+                # Stage.2 pass through KDE
                 # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
                 batch_times_bag_size, feature_size = latent_features.size()
                 bag_size = config.bag_size
                 batch_size = batch_times_bag_size // bag_size
                 latent_features = latent_features.view(batch_size, bag_size, feature_size)
+                batch_kde_distributions = self.rcc_model.ucc_predictor.kde(latent_features)  # shape [Batch=1, 8448]
 
-                batch_kde_distributions = self.ucc_predictor_model.kde(latent_features)  # shape [Batch=2, 8448]
-                num_imgs_in_class += batch_kde_distributions.size(0)
+                # Stage.3 Take sum
+                num_bags_in_class += batch_kde_distributions.size(0)
                 kde_distributions = torch.sum(batch_kde_distributions, dim=0)
                 kde_per_class[class_idx] += kde_distributions
-            kde_per_class[class_idx] /= num_imgs_in_class
+
+            # Stage.4 Take average
+            kde_per_class[class_idx] /= num_bags_in_class
 
         # find the js_divergence
         min_divergence = torch.inf
@@ -717,7 +670,7 @@ class RCCTrainer:
             for batch_idx, data in tqdm(enumerate(pure_autoencoder_loader)):
                 # batch data is of shape (1,3,32,32), (1,1)
                 image, label = data
-                latent_features = self.autoencoder_model.encoder(image)  # shape (1, 48*16)
+                latent_features = self.rcc_model.autoencoder.encoder(image)  # shape (1, 48*16)
 
                 latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (48*16)
                 label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
