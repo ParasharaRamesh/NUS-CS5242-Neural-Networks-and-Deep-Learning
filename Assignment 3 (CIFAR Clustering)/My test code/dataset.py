@@ -74,7 +74,7 @@ class Dataset:
         # self.x_test, self.test_mu, self.test_std = self.normalize(self.x_test)
         self.y_test = torch.from_numpy(y_test).to(dtype=torch.float32)
 
-        # restricting x_val a lot more
+        # restricting x_val a lot more to 1/10th the test size
         # Generate random indices for sampling without replacement
         random_indices = torch.randperm(len(x_test))
         x_val = x_val[random_indices[:len(x_test)//10]]
@@ -97,14 +97,24 @@ class Dataset:
         self.test_sub_datasets = self.create_sub_datasets(self.x_test, self.y_test)
         self.val_sub_datasets = self.create_sub_datasets(self.x_val, self.y_val)
 
-        # create dataloaders
-        print("Creating KDE dataloaders")
-        self.kde_test_dataloaders = self.create_kde_dataloaders(self.test_sub_datasets)
+        if not self.debug:
+            # create dataloaders
+            print("Creating KDE dataloaders")
+            self.kde_test_dataloaders = self.create_kde_dataloaders(self.test_sub_datasets)
 
-        print("Created KDE dataloaders, now creating autoencoder dataloaders")
-        # batch size is 1 as we care about image level features anyway
-        self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, 1) for test_sub_dataset in
-                                             self.test_sub_datasets]
+            print("Created KDE dataloaders, now creating autoencoder dataloaders")
+            # batch size is 1 as we care about image level features anyway
+            self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, 1) for test_sub_dataset in
+                                                 self.test_sub_datasets]
+        else:
+            # create dataloaders
+            print("Creating debug KDE dataloaders")
+            self.kde_test_dataloaders = self.create_kde_dataloaders(self.val_sub_datasets)
+
+            print("Created debug KDE dataloaders, now creating debug autoencoder dataloaders")
+            # batch size is 1 as we care about image level features anyway
+            self.autoencoder_test_dataloaders = [DeviceDataLoader(val_sub_dataset, 1) for val_sub_dataset in
+                                                 self.val_sub_datasets]
         print("Created autoencoder dataloaders, now creating ucc dataloaders")
         self.ucc_train_dataloader, self.ucc_test_dataloader, self.ucc_val_dataloader = self.get_dataloaders_for_ucc()
         print("Created ucc dataloaders, now creating rcc dataloaders")
@@ -335,7 +345,7 @@ if __name__ == '__main__':
     x_test = splitted_dataset['x_test']
     y_test = splitted_dataset['y_test']
 
-    dataset = Dataset(x_train, y_train, x_val, y_val, x_test, y_test)
+    dataset = Dataset(x_train, y_train, x_val, y_val, x_test, y_test, debug=False)
     print(f"Len of ucc_train is {len(dataset.ucc_train_dataloader)}")
     print(f"Len of ucc_test is {len(dataset.ucc_test_dataloader)}")
     print(f"Len of ucc_val is {len(dataset.ucc_val_dataloader)}")

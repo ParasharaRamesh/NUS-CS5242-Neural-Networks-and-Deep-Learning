@@ -3,10 +3,168 @@ import torch.nn as nn
 from torchinfo import summary
 import numpy as np
 from params import *
+import torch.nn.functional as F
 
+class ResidualZeroPaddingBlock(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        first_block=False,
+        down_sample=False,
+        up_sample=False,
+    ):
+        super(ResidualZeroPaddingBlock, self).__init__()
+        self.first_block = first_block
+        self.down_sample = down_sample
+        self.up_sample = up_sample
+
+        if self.up_sample:
+            self.upsampling = nn.Upsample(scale_factor=2, mode="nearest")
+
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            stride=2 if self.down_sample else 1,
+        )
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.skip_conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=1,
+            stride=2 if self.down_sample else 1,
+        )
+
+        # Initialize the weights and biases
+        nn.init.xavier_uniform_(self.conv1.weight)
+        nn.init.constant_(self.conv1.bias, 0.1)
+        nn.init.xavier_uniform_(self.conv2.weight)
+        nn.init.constant_(self.conv2.bias, 0.1)
+        nn.init.xavier_uniform_(self.skip_conv.weight)
+
+    def forward(self, x):
+        if self.first_block:
+            x = nn.ReLU()(x)
+            if self.up_sample:
+                x = self.upsampling(x)
+            out = nn.ReLU()(self.conv1(x))
+            out = self.conv2(out)
+            if x.shape != out.shape:
+                x = self.skip_conv(x)
+        else:
+            out = nn.ReLU()(self.conv1(x))
+            out = nn.ReLU()(self.conv2(out))
+        return x + out
+
+
+class WideResidualBlocks(nn.Module):
+    def __init__(
+        self, in_channels, out_channels, n, down_sample=False, up_sample=False
+    ):
+        super(WideResidualBlocks, self).__init__()
+        self.blocks = nn.Sequential(
+            *[
+                ResidualZeroPaddingBlock(
+                    in_channels if i == 0 else out_channels,
+                    out_channels,
+                    first_block=(i == 0),
+                    down_sample=down_sample,
+                    up_sample=up_sample,
+                )
+                for i in range(n)
+            ]
+        )
+
+    def forward(self, x):
+        return self.blocks(x)
+
+class Reshape(nn.Module):
+    def __init__(self, *target_shape):
+        super(Reshape, self).__init__()
+        self.target_shape = target_shape
+
+    def forward(self, x):
+        return x.view(x.size(0), *self.target_shape)
+
+class Autoencoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(
+                3,
+                16,
+                kernel_size=3,
+                padding=1,
+            ),
+            WideResidualBlocks(
+                16,
+                32,
+                1
+            ),
+            WideResidualBlocks(
+                32,
+                64,
+                1,
+                down_sample=True
+            ),
+            WideResidualBlocks(
+                64,
+                128,
+                1,
+                down_sample=True,
+            ),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(
+                8192,
+                2048,
+                bias=False,
+            ),
+            nn.Sigmoid(),
+        )
+
+        self.decoder = nn.Sequential(
+            nn.Linear(
+                2048,
+                8192,
+            ),
+            Reshape(*[128, 8, 8]),
+            WideResidualBlocks(
+                128,
+                128,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                128,
+                64,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                64,
+                32,
+                1,
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                32,
+                3,
+                kernel_size=3,
+                padding=1,
+            ),
+        )
+
+    def forward(self, x):
+        x = x.to(torch.float32)
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded).to(torch.float32)
+        return encoded, decoded
 
 # Autoencoder
-class Autoencoder(nn.Module):
+class OldAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
 
@@ -93,15 +251,15 @@ class KDE(nn.Module):
 class UCCPredictor(nn.Module):
     def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
         super().__init__()
-        # Input size: [Batch, Bag, 48*16]
+        # Input size: [Batch, Bag, 1024]
         # Output size: [Batch, 4]
         self.kde = KDE(device)
         self.stack = nn.Sequential(
-            nn.MaxPool1d(kernel_size=2, stride=2),  # shape 4224
+            nn.MaxPool1d(kernel_size=2, stride=2),
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
             nn.ReLU(),
-            nn.Linear(2112, 256, dtype=torch.float32),
+            nn.Linear(5632, 256, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(256, 32, dtype=torch.float32),
@@ -120,7 +278,7 @@ class UCCPredictor(nn.Module):
         print("UCC Predictor model initialized")
 
     def forward(self, x):
-        kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
+        kde_prob_distributions = self.kde(x)  # shape (Batch, 22528)
         ucc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 4)
         return ucc_logits
 
@@ -156,21 +314,21 @@ class CombinedUCCModel(nn.Module):
 class RCCPredictor(nn.Module):
     def __init__(self, device=config.device, rcc_limit=config.rcc_limit):
         super().__init__()
-        # Input size: [Batch, Bag, 48*16]
+        # Input size: [Batch, Bag, 1024]
         # Output size: [Batch, 4]
         self.kde = KDE(device)
         self.stack = nn.Sequential(
-            nn.MaxPool1d(kernel_size=2, stride=2),  # shape 4224
+            nn.MaxPool1d(kernel_size=2, stride=2),
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2, stride=2),  # shape 2112
             nn.ReLU(),
-            nn.Linear(2112, 256),
+            nn.Linear(5632, 256, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(256, 32),
+            nn.Linear(256, 32, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(32, rcc_limit),
+            nn.Linear(32, rcc_limit, dtype=torch.float32),
             nn.ReLU()
         )
 
@@ -216,6 +374,7 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Autoencoder model test
+    # autoencoder = OldAutoencoder().to(device)
     # autoencoder = Autoencoder().to(device)
     # summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
@@ -224,20 +383,9 @@ if __name__ == '__main__':
     # summary(kde, input_size=(10, 48 * 16), device=device, batch_dim=0,
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
-    # UCC layer test
-    # ucc_predictor = UCCPredictor(device).to(device)
-    # summary(ucc_predictor, input_size=(10, 48 * 16), device=device, batch_dim=0,
-    #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
-
     # Combined UCC model
     # combined_ucc = CombinedUCCModel(device).to(device)
     # summary(combined_ucc, input_size=(12, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
-
-    # RCC layer test
-    # rcc_predictor = RCCPredictor(device).to(device)
-    # summary(rcc_predictor, input_size=(10, 48 * 16), device=device, batch_dim=0,
-    #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
-
 
     #Combined RCC model
     # combined_rcc = CombinedRCCModel(device).to(device)
