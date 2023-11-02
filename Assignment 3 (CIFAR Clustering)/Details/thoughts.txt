@@ -67,16 +67,16 @@ RCC yet to do
 
 Things to try:
 
-1. do the 0.5 avg loss for both
+1. do the 0.5 avg loss for both (X)
 2. try training the autoencoder separately first
 3. change the autoencoder loader class to have num of bags and validate that first
-4. in the autoencoder encoder side dont flatten , do the flattening in the kde.
-4. don't beef up my current ucc and rcc predictor
-5. no need gradient clipping, if needed what value to keep?
-6. original feature extractor not good enough? maybe use resnet 18?
-7. the size of the linear layers might be causing the  problems!
-8. try only uniform xavier init
-9. train an autoencoder separately and make that the best and then freeze that and learn ucc.
+4. in the autoencoder encoder side dont flatten , do the flattening in the kde. (X)
+5. don't beef up my current ucc and rcc predictor
+6. no need gradient clipping, if needed what value to keep?
+7. original feature extractor not good enough? maybe use resnet 18?
+8. the size of the linear layers might be causing the  problems!
+9. try only uniform xavier init (X)
+10. train an autoencoder separately and make that the best and then freeze that and learn ucc.
 
 
 

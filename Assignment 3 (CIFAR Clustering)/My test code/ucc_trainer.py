@@ -115,7 +115,7 @@ class UCCTrainer:
                 ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, one_hot_ucc_labels, True)
 
                 # calculate combined loss
-                batch_loss = ae_loss + ucc_loss
+                batch_loss = (0.5 * ae_loss) + (0.5 * ucc_loss)
 
                 # do loss backward for all losses
                 batch_loss.backward()
@@ -518,9 +518,10 @@ class UCCTrainer:
         kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
 
         # find the average kde across all classes
-        for class_idx, pure_class_kde_loader in tqdm(enumerate(self.kde_loaders)):
+        for class_idx, pure_class_kde_loader in enumerate(self.kde_loaders):
+            print(f"Kde Loader {class_idx} started!")
             num_bags_in_class = 0
-            for images in pure_class_kde_loader:
+            for images in tqdm(pure_class_kde_loader):
                 # get the first element
                 images = images[0]
 
@@ -531,15 +532,13 @@ class UCCTrainer:
                 batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
                     torch.float32)
                 latent_features = self.ucc_model.autoencoder.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
-                latent_features = latent_features.to(torch.float32)
+                latent_features = latent_features.to(torch.float32) #shape (Batch * Bag, 256, 2, 2)
 
                 #Stage.2 pass through KDE
-                # encoded is of shape [Batch * Bag, 48*16] ->  make it into shape [Batch, Bag, 48*16]
-                batch_times_bag_size, feature_size = latent_features.size()
-                bag_size = config.bag_size
-                batch_size = batch_times_bag_size // bag_size
-                latent_features = latent_features.view(batch_size, bag_size, feature_size)
-                batch_kde_distributions = self.ucc_model.ucc_predictor.kde(latent_features)  # shape [Batch=1, 8448]
+                # encoded is of shape [Batch * Bag, 256,2,2] ->  make it into shape [Batch, Bag, 256*2*2]
+                latent_features = latent_features.view(batch_size, bag_size, latent_features.size(1) * latent_features.size(2) * latent_features.size(3))
+
+                batch_kde_distributions = self.ucc_model.ucc_predictor.kde(latent_features) # shape [Batch, 1024*11]
 
                 #Stage.3 Take sum
                 num_bags_in_class += batch_kde_distributions.size(0)
@@ -548,6 +547,9 @@ class UCCTrainer:
 
             #Stage.4 Take average
             kde_per_class[class_idx] /= num_bags_in_class
+            print(f"Kde Loader {class_idx} done!")
+
+        print("Computed all the kde's! Now finding min js divergence..")
 
         # find the js_divergence
         min_divergence = torch.inf
@@ -569,13 +571,16 @@ class UCCTrainer:
     def calculate_clustering_accuracy(self):
         all_latent_features = []
         truth_labels_arr = []
-        for pure_autoencoder_loader in self.autoencoder_loaders:
-            for batch_idx, data in tqdm(enumerate(pure_autoencoder_loader)):
+        print(f"No of autoencoder loaders are {len(self.autoencoder_loaders)}")
+        for autoencoder_idx, pure_autoencoder_loader in enumerate(self.autoencoder_loaders):
+            print(f"Started pure autoencoder loader {autoencoder_idx} of length {len(pure_autoencoder_loader)}")
+            for data in tqdm(pure_autoencoder_loader):
                 # batch data is of shape (1,3,32,32), (1,1)
                 image, label = data
-                latent_features = self.ucc_model.autoencoder.encoder(image)  # shape (1, 48*16)
+                latent_features = self.ucc_model.autoencoder.encoder(image)  # shape (1, 256,2,2)
+                latent_features = latent_features.view(-1) #flatten
 
-                latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (48*16)
+                latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (1024)
                 label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
 
                 all_latent_features.append(latent_features)

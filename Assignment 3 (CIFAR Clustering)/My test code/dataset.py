@@ -188,6 +188,7 @@ class Dataset:
 
                 # Append the current class dataset to the list
                 sub_datasets.append(class_dataset)
+        assert len(sub_datasets) == self.num_classes
         return sub_datasets
 
     # pick random image from ith class
