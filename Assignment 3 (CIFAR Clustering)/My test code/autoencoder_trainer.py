@@ -20,13 +20,11 @@ class AutoencoderTrainer:
 
         # data
         self.dataset = dataset
-        self.train_sub_datasets = dataset.train_sub_datasets
-        self.val_sub_datasets = dataset.val_sub_datasets
-        self.autoencoder_train_dataloaders = [DeviceDataLoader(train_sub_dataset, batch_size) for train_sub_dataset in self.train_sub_datasets]
-        self.autoencoder_val_dataloaders = [DeviceDataLoader(test_sub_dataset, batch_size) for test_sub_dataset in self.val_sub_datasets]
+        self.train_dataset = ConcatDataset(dataset.train_sub_datasets)
+        self.val_dataset = ConcatDataset(dataset.val_sub_datasets)
 
-        self.train_loader = ConcatDataset(self.autoencoder_train_dataloaders)
-        self.val_loader = ConcatDataset(self.autoencoder_val_dataloaders)
+        self.train_loader = DeviceDataLoader(self.train_dataset, batch_size)
+        self.val_loader = DeviceDataLoader(self.val_dataset, batch_size)
 
         # create the directory if it doesn't exist!
         os.makedirs(self.save_dir, exist_ok=True)
@@ -35,12 +33,12 @@ class AutoencoderTrainer:
         self.autoencoder_model = autoencoder_model
 
         # Adam optimizer(s)
-        self.autoencoder_optimizer = optim.Adam(self.autoencoder_model.parameters(), lr=config.learning_rate,
-                                                weight_decay=config.weight_decay)
+        self.ae_optimizer = optim.Adam(self.autoencoder_model.parameters(), lr=config.learning_rate,
+                                       weight_decay=config.weight_decay)
 
         # Loss criterion(s)
-        # self.ae_loss_criterion = nn.MSELoss()
-        self.ae_loss_criterion = SSIMLoss()
+        self.ae_loss_criterion = nn.MSELoss()
+        # self.ae_loss_criterion = SSIMLoss()
 
         # Transforms
         self.tensor_to_img_transform = transforms.ToPILImage()
@@ -93,7 +91,7 @@ class AutoencoderTrainer:
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
-                images = data
+                images, _ = data
 
                 # forward propogate through the combined model
                 encoded, decoded = self.autoencoder_model(images)
@@ -195,9 +193,7 @@ class AutoencoderTrainer:
     def calculate_autoencoder_loss(self, images, decoded):
         # data is of shape (batchsize=2,bag=10,channels=3,height=32,width=32)
         # generally batch size of 16 is good for cifar10 so predicting 20 won't be so bad
-        batch_size, bag_size, num_channels, height, width = images.size()
-        batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
-        ae_loss = self.ae_loss_criterion(decoded, batches_of_bag_images)  # compares (Batch * Bag, 3,32,32)
+        ae_loss = self.ae_loss_criterion(decoded, images)  # compares (Batch * Bag, 3,32,32)
         return ae_loss
 
     def calculate_avg_train_stats_hook(self, epoch_ae_loss):
@@ -218,7 +214,7 @@ class AutoencoderTrainer:
             self.autoencoder_model.eval()
 
             for val_batch_idx, val_data in enumerate(self.val_loader):
-                val_images = val_data
+                val_images, _ = val_data
 
                 # forward propogate through the model
                 val_encoded, val_decoded = self.autoencoder_model(val_images)
@@ -233,7 +229,6 @@ class AutoencoderTrainer:
         no_of_bags = len(self.val_loader) * config.batch_size
         avg_val_ae_loss = val_ae_loss / no_of_bags
 
-        print(f"Avg Val ae loss is {avg_val_ae_loss}")
         print("Now showing a sample reconstruction")
 
         # show some sample predictions
@@ -297,7 +292,7 @@ class AutoencoderTrainer:
             self.autoencoder_model.eval()
 
             for val_data in dataloader:
-                val_images = val_data
+                val_images, _ = val_data
 
                 # forward propagate through the model
                 _, val_reconstructed_images = self.autoencoder_model(val_images)

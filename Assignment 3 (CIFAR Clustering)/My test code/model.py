@@ -5,6 +5,8 @@ import numpy as np
 from params import *
 import torch.nn.functional as F
 
+# Fancy approach which didnt work
+'''
 
 class ResidualZeroPaddingBlock(nn.Module):
     def __init__(
@@ -82,7 +84,7 @@ class WideResidualBlocks(nn.Module):
         return self.blocks(x)
 
 
-class Autoencoder(nn.Module):
+class NewAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
@@ -166,47 +168,61 @@ class Autoencoder(nn.Module):
         return encoded, decoded
 
 
+'''
+
+
+class Reshape(nn.Module):
+    def __init__(self, *target_shape):
+        super(Reshape, self).__init__()
+        self.target_shape = target_shape
+
+    def forward(self, x):
+        return x.view(x.size(0), *self.target_shape)
+
+
 # Autoencoder
-class OldAutoencoder(nn.Module):
+class Autoencoder(nn.Module):
     def __init__(self):
         super().__init__()
 
         # Input size: [batch, 3, 32, 32]
         # Output size: [batch, 3, 32, 32]
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 12, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
-            # nn.BatchNorm2d(12),
+            nn.Conv2d(3, 32, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(12, 24, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
-            # nn.BatchNorm2d(24),
+            nn.Conv2d(32, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(24, 48, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 48, 4, 4]
-            # nn.BatchNorm2d(48),
-            nn.Flatten(),
-            nn.Linear(48 * 16, 48 * 16, dtype=torch.float32),
+            nn.Conv2d(64, 128, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 64, 4, 4]
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            Reshape(*[128 * 4 * 4]),
+            nn.Linear(128 * 4 * 4, 128 * 4 * 4),
+            nn.Dropout(0.1),
+            Reshape(*[128, 4, 4]),
             nn.Sigmoid()
         )
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(48, 24, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
-            nn.ConvTranspose2d(24, 12, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
-            nn.ConvTranspose2d(12, 3, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 3, 32, 32]
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 32, 8, 8]
+            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 16, 16, 16]
+            nn.ConvTranspose2d(32, 3, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 3, 32, 32]
             nn.Sigmoid()
         )
 
         # Initialize weights using Xavier initialization with normal distribution
-        # for m in self.modules():
-        #     if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-        #         nn.init.xavier_normal_(m.weight)
-        #         nn.init.constant_(m.bias, 0.1)
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0.1)
 
         print("Autoencoder model initialized!")
 
     def forward(self, x):
         x = x.to(torch.float32)
         encoded = self.encoder(x)
-        reshaped_encoded = encoded.view(-1, 48, 4, 4).to(torch.float32)
-        decoded = self.decoder(reshaped_encoded).to(torch.float32)
+        decoded = self.decoder(encoded).to(torch.float32)
         return encoded, decoded
 
 
@@ -262,7 +278,10 @@ class UCCPredictor(nn.Module):
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2),
             nn.ReLU(),
-            nn.Linear(2816, 256, dtype=torch.float32),
+            nn.Linear(5632, 1024, dtype=torch.float32),
+            nn.Dropout(0.1),
+            nn.ReLU(),
+            nn.Linear(1024, 256, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(256, 32, dtype=torch.float32),
@@ -329,7 +348,10 @@ class RCCPredictor(nn.Module):
             nn.ReLU(),
             nn.AvgPool1d(kernel_size=2),
             nn.ReLU(),
-            nn.Linear(2816, 256, dtype=torch.float32),
+            nn.Linear(5632, 1024, dtype=torch.float32),
+            nn.Dropout(0.1),
+            nn.ReLU(),
+            nn.Linear(1024, 256, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(256, 32, dtype=torch.float32),
@@ -392,9 +414,9 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Autoencoder model test
-    # autoencoder = OldAutoencoder().to(device)
-    autoencoder = Autoencoder().to(device)
-    summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    # autoencoder = NewAutoencoder().to(device)
+    # autoencoder = Autoencoder().to(device)
+    # summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # KDE Layer test
     # kde = KDE(device).to(device)
