@@ -102,6 +102,7 @@ class Dataset:
             print("Creating KDE dataloaders")
             self.kde_test_dataloaders = self.create_kde_dataloaders(self.test_sub_datasets)
 
+            #TODO.x the autoencoder dataloaders need not have just 1 as the batch size it can be a lot more something like 48
             print("Created KDE dataloaders, now creating autoencoder dataloaders")
             # batch size is 1 as we care about image level features anyway
             self.autoencoder_test_dataloaders = [DeviceDataLoader(test_sub_dataset, 1) for test_sub_dataset in

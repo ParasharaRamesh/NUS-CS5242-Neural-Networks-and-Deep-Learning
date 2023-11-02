@@ -384,10 +384,10 @@ if __name__ == '__main__':
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # Combined UCC model
-    # combined_ucc = CombinedUCCModel(device).to(device)
-    # summary(combined_ucc, input_size=(12, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    combined_ucc = CombinedUCCModel(device).to(device)
+    summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     #Combined RCC model
     # combined_rcc = CombinedRCCModel(device).to(device)
-    # summary(combined_rcc, input_size=(12, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    # summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 

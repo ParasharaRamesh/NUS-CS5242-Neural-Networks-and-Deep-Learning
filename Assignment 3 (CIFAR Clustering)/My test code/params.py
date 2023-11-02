@@ -18,7 +18,8 @@ class Config:
     batch_size = 1
     ucc_limit = 4
     rcc_limit = 10
-    bag_size = 12
+    bag_size = 24
+    # bag_size = 12
 
 
 config = Config()
