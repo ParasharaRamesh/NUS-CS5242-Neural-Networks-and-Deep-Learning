@@ -236,35 +236,35 @@ class KDE(nn.Module):
         print("KDE Layer initialized")
 
     def forward(self, data):
-        batch_size, bag_size, num_features = data.size()  # Batch, bag, J
+        batch_size, num_instances, num_features = data.shape
 
-        # Create a tensor for the sample points
-        k_sample_points = torch.linspace(0, 1, steps=self.num_nodes).repeat(batch_size, bag_size, 1).to(
-            self.device)  # B, bag, num_nodes
+        # Create sample points
+        k_sample_points = (
+            torch.linspace(0, 1, steps=config.num_nodes)
+            .repeat(batch_size, num_instances, 1)
+            .to(device)
+        )
 
-        # Constants
-        k_alfa = 1 / np.sqrt(2 * np.pi * np.square(self.sigma))
-        k_beta = -1 / (2 * self.sigma ** 2)
+        # Calculate constants
+        k_alpha = 1 / np.sqrt(2 * np.pi * config.sigma**2)
+        k_beta = -1 / (2 * config.sigma**2)
 
+        # Iterate over features and calculate kernel density estimation for each feature
         out_list = []
-
-        for j in range(num_features):
-            data_j = data[:, :, j]  # shape (Batch, bag)
-            temp_data = data_j.view(-1, bag_size, 1)  # shape (Batch, bag, 1)
-            temp_data = temp_data.expand(-1, -1, self.num_nodes)  # shape ( Batch, bag, num_nodes)
-
-            k_diff = k_sample_points - temp_data  # shape ( Batch, bag, num_nodes)
-            k_diff_2 = torch.square(k_diff)  # shape ( Batch, bag, num_nodes)
-            k_result = k_alfa * torch.exp(k_beta * k_diff_2)  # shape ( Batch, bag, num_nodes)
-            k_out_unnormalized = torch.sum(k_result, dim=1)  # (B, num_nodes)
-            k_norm_coeff = k_out_unnormalized.sum(dim=1).view(batch_size, 1)  # (B,1)
-            k_out = k_out_unnormalized / k_norm_coeff.expand(-1, k_out_unnormalized.size(1))  # (B, num_nodes)
-
+        for i in range(num_features):
+            one_feature = data[:, :, i : i + 1].repeat(1, 1, config.num_nodes)
+            k_diff_2 = (k_sample_points - one_feature) ** 2
+            k_result = k_alpha * torch.exp(k_beta * k_diff_2)
+            k_out_unnormalized = k_result.sum(dim=1)
+            k_norm_coeff = k_out_unnormalized.sum(dim=1).view(-1, 1)
+            k_out = k_out_unnormalized / k_norm_coeff.repeat(
+                1, k_out_unnormalized.size(1)
+            )
             out_list.append(k_out)
-        # out_list is of shape (J, B, num_nodes)
-        concat_out = torch.cat(out_list, dim=-1)  # shape is (Batch, J*num_nodes)
-        return concat_out  # shape is (Batch, J*num_nodes) -> (1, 8448)
 
+        # Concatenate the results
+        concat_out = torch.cat(out_list, dim=-1)
+        return concat_out
 
 # UCC Prediction model
 class UCCPredictor(nn.Module):
@@ -424,8 +424,8 @@ if __name__ == '__main__':
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # Combined UCC model
-    # combined_ucc = CombinedUCCModel(device).to(device)
-    # summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    combined_ucc = CombinedUCCModel(device).to(device)
+    summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # Combined RCC model
     # combined_rcc = CombinedRCCModel(device).to(device)
