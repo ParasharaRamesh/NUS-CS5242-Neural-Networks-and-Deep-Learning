@@ -70,6 +70,7 @@ Things to try:
 1. do the 0.5 avg loss for both
 2. try training the autoencoder separately first
 3. change the autoencoder loader class to have num of bags and validate that first
+4. in the autoencoder encoder side dont flatten , do the flattening in the kde.
 4. don't beef up my current ucc and rcc predictor
 5. no need gradient clipping, if needed what value to keep?
 6. original feature extractor not good enough? maybe use resnet 18?
