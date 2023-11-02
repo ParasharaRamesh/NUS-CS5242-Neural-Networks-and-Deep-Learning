@@ -263,7 +263,7 @@ class KDE(nn.Module):
             out_list.append(k_out)
 
         # Concatenate the results
-        concat_out = torch.cat(out_list, dim=-1)
+        concat_out = torch.cat(out_list, dim=-1).to(self.device)
         return concat_out
 
 # UCC Prediction model
@@ -428,5 +428,5 @@ if __name__ == '__main__':
     summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # Combined RCC model
-    # combined_rcc = CombinedRCCModel(device).to(device)
-    # summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    combined_rcc = CombinedRCCModel(device).to(device)
+    summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
