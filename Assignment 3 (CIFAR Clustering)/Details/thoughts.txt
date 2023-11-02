@@ -74,6 +74,8 @@ Things to try:
 5. no need gradient clipping, if needed what value to keep?
 6. original feature extractor not good enough? maybe use resnet 18?
 7. the size of the linear layers might be causing the  problems!
+8. try only uniform xavier init
+9. train an autoencoder separately and make that the best and then freeze that and learn ucc.
 
 
 
