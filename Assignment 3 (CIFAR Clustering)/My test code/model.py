@@ -159,6 +159,7 @@ class Autoencoder(nn.Module):
         )
 
         print("Autoencoder initialized")
+
     def forward(self, x):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
@@ -287,9 +288,13 @@ class UCCPredictor(nn.Module):
 
 # Combined UCC model
 class CombinedUCCModel(nn.Module):
-    def __init__(self, device=config.device):
+    def __init__(self, device=config.device, autoencoder_model=None):
         super().__init__()
-        self.autoencoder = Autoencoder()
+        if autoencoder_model:
+            self.autoencoder = autoencoder_model
+        else:
+            self.autoencoder = Autoencoder()
+
         self.ucc_predictor = UCCPredictor(device)
         print("Combined UCC model initialized")
 
@@ -303,7 +308,6 @@ class CombinedUCCModel(nn.Module):
         encoded, decoded = self.autoencoder(
             batches_of_image_bags
         )  # we are feeding in Batch*bag images of shape (3,32,32)
-
 
         # Stage 2. use the autoencoder latent features to pass through the ucc predictor
         # encoded shape is now (Batch* Bag, 256,4,4) -> (Batch, Bag, 256*4*4)
@@ -350,9 +354,14 @@ class RCCPredictor(nn.Module):
 
 # Combined RCC model
 class CombinedRCCModel(nn.Module):
-    def __init__(self, device=config.device):
+    def __init__(self, device=config.device, autoencoder_model=None):
         super().__init__()
-        self.autoencoder = Autoencoder()
+
+        if autoencoder_model:
+            self.autoencoder = autoencoder_model
+        else:
+            self.autoencoder = Autoencoder()
+
         self.ucc_predictor = UCCPredictor(device)
         self.rcc_predictor = RCCPredictor(device)
 

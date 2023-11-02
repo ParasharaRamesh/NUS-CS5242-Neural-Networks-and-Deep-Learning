@@ -1,6 +1,5 @@
-import torch
 import numpy as np
-from torch import nn, optim
+from torch import optim
 from tqdm.auto import tqdm
 import os
 from params import *
@@ -11,13 +10,20 @@ from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 from loss import *
 
+
 class UCCTrainer:
     def __init__(self,
                  name, ucc_model,
-                 dataset, save_dir, device=config.device):
+                 dataset, save_dir, device=config.device,
+                 importances={"ae": 0.3, "ucc": 0.7}
+                 ):
         self.name = name
         self.save_dir = save_dir
         self.device = device
+
+        # importances
+        self.ae_importance = importances["ae"]
+        self.ucc_importance = importances["ucc"]
 
         # data
         self.dataset = dataset
@@ -107,7 +113,7 @@ class UCCTrainer:
             for batch_idx, data in enumerate(self.train_loader):
                 images, one_hot_ucc_labels = data
 
-                #forward propogate through the combined model
+                # forward propogate through the combined model
                 ucc_logits, decoded = self.ucc_model(images)
 
                 # calculate losses from both models for a batch of bags
@@ -115,7 +121,7 @@ class UCCTrainer:
                 ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, one_hot_ucc_labels, True)
 
                 # calculate combined loss
-                batch_loss = (0.5 * ae_loss) + (0.5 * ucc_loss)
+                batch_loss = (self.ae_importance * ae_loss) + (self.ucc_importance * ucc_loss)
 
                 # do loss backward for all losses
                 batch_loss.backward()
@@ -285,7 +291,7 @@ class UCCTrainer:
             for val_batch_idx, val_data in enumerate(self.val_loader):
                 val_images, val_one_hot_ucc_labels = val_data
 
-                #forward propogate through the model
+                # forward propogate through the model
                 val_ucc_logits, val_decoded = self.ucc_model(val_images)
 
                 # calculate losses from both models for a batch of bags
@@ -416,8 +422,8 @@ class UCCTrainer:
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss = self.calculate_autoencoder_loss(test_images, test_decoded)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(test_ucc_logits,
-                                                                                             test_one_hot_ucc_labels,
-                                                                                             False)
+                                                                                               test_one_hot_ucc_labels,
+                                                                                               False)
 
                 # calculate combined loss
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
@@ -455,7 +461,7 @@ class UCCTrainer:
             for val_data in dataloader:
                 val_images, _ = val_data
 
-                #reshape to appropriate size
+                # reshape to appropriate size
                 batch_size, bag_size, num_channels, height, width = val_images.size()
                 bag_val_images = val_images.view(batch_size * bag_size, num_channels, height, width)
                 print("Reshaped the original image into bag format")
@@ -525,27 +531,27 @@ class UCCTrainer:
                 # get the first element
                 images = images[0]
 
-                #Stage.1 pass through the encoder to get the latent features
+                # Stage.1 pass through the encoder to get the latent features
                 # batch data is of shape ( Batch,bag, 3,32,32)
                 batch_size, bag_size, num_channels, height, width = images.size()
                 # reshaping to shape ( batch * bag, 3 ,32,32)
                 batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
                     torch.float32)
                 latent_features = self.ucc_model.autoencoder.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
-                latent_features = latent_features.to(torch.float32) #shape (Batch * Bag, 256, 2, 2)
+                latent_features = latent_features.to(torch.float32)  # shape (Batch * Bag, 256, 2, 2)
 
-                #Stage.2 pass through KDE
+                # Stage.2 pass through KDE
                 # encoded is of shape [Batch * Bag, 256,2,2] ->  make it into shape [Batch, Bag, 256*2*2]
                 latent_features = latent_features.view(batch_size, bag_size, latent_features.size(1) * latent_features.size(2) * latent_features.size(3))
 
-                batch_kde_distributions = self.ucc_model.ucc_predictor.kde(latent_features) # shape [Batch, 1024*11]
+                batch_kde_distributions = self.ucc_model.ucc_predictor.kde(latent_features)  # shape [Batch, 1024*11]
 
-                #Stage.3 Take sum
+                # Stage.3 Take sum
                 num_bags_in_class += batch_kde_distributions.size(0)
                 kde_distributions = torch.sum(batch_kde_distributions, dim=0)
                 kde_per_class[class_idx] += kde_distributions
 
-            #Stage.4 Take average
+            # Stage.4 Take average
             kde_per_class[class_idx] /= num_bags_in_class
             print(f"Kde Loader {class_idx} done!")
 
@@ -578,7 +584,7 @@ class UCCTrainer:
                 # batch data is of shape (1,3,32,32), (1,1)
                 image, label = data
                 latent_features = self.ucc_model.autoencoder.encoder(image)  # shape (1, 256,2,2)
-                latent_features = latent_features.view(-1) #flatten
+                latent_features = latent_features.view(-1)  # flatten
 
                 latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (1024)
                 label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)

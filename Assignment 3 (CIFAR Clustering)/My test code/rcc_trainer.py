@@ -7,7 +7,6 @@ from params import *
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
 import torch.nn.functional as F
-from sklearn import metrics
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 from loss import *
@@ -16,10 +15,17 @@ from loss import *
 class RCCTrainer:
     def __init__(self,
                  name, rcc_model,
-                 dataset, save_dir, device=config.device):
+                 dataset, save_dir, device=config.device,
+                 importances={"ae": 0.2, "ucc": 0.4, "rcc": 0.4}
+                 ):
         self.name = name
         self.save_dir = save_dir
         self.device = device
+
+        # importances
+        self.ae_importance = importances["ae"]
+        self.ucc_importance = importances["ucc"]
+        self.rcc_importance = importances["rcc"]
 
         # data
         self.train_loader = dataset.ucc_rcc_train_dataloader
@@ -126,7 +132,7 @@ class RCCTrainer:
                 rcc_loss, batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(rcc_logits, rcc_labels, True)
 
                 # calculate combined loss
-                batch_loss = (ae_loss + ucc_loss + rcc_loss)/3
+                batch_loss = (self.ae_importance * ae_loss) + (self.ucc_importance * ucc_loss) + (self.rcc_importance * rcc_loss)
 
                 # do loss backward for all losses
                 batch_loss.backward()
@@ -629,13 +635,13 @@ class RCCTrainer:
                     torch.float32)
                 latent_features = self.rcc_model.autoencoder.encoder(
                     batches_of_bag_images)  # shape (Batch * bag, 48*16)
-                latent_features = latent_features.to(torch.float32) #shape (Batch * Bag, 256, 2, 2)
+                latent_features = latent_features.to(torch.float32)  # shape (Batch * Bag, 256, 2, 2)
 
-                #Stage.2 pass through KDE
+                # Stage.2 pass through KDE
                 # encoded is of shape [Batch * Bag, 256,2,2] ->  make it into shape [Batch, Bag, 256*2*2]
                 latent_features = latent_features.view(batch_size, bag_size, latent_features.size(1) * latent_features.size(2) * latent_features.size(3))
 
-                batch_kde_distributions = self.rcc_model.ucc_predictor.kde(latent_features)   # shape [Batch, 1024*11]
+                batch_kde_distributions = self.rcc_model.ucc_predictor.kde(latent_features)  # shape [Batch, 1024*11]
 
                 # Stage.3 Take sum
                 num_bags_in_class += batch_kde_distributions.size(0)
@@ -675,7 +681,7 @@ class RCCTrainer:
                 # batch data is of shape (1,3,32,32), (1,1)
                 image, label = data
                 latent_features = self.rcc_model.autoencoder.encoder(image)  # shape (1, 48*16)
-                latent_features = latent_features.view(-1) #flatten
+                latent_features = latent_features.view(-1)  # flatten
 
                 latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (48*16)
                 label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
