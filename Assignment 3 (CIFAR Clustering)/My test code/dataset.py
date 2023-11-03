@@ -254,7 +254,7 @@ class Dataset:
             bag_tensors.append(torch.stack(bag_tensor))
             #NOTE to self: No need to do one hotification here
             # ucc_tensors.append(self.one_hot(ucc, self.ucc_limit))
-            ucc_tensors.append(torch.tensor(ucc))
+            ucc_tensors.append(torch.tensor(ucc-1))
 
         return TensorDataset(
             torch.stack(bag_tensors),
@@ -316,7 +316,7 @@ class Dataset:
             '''
 
             bag_tensors.append(torch.stack(bag_tensor))
-            ucc_tensors.append(torch.tensor(ucc))
+            ucc_tensors.append(torch.tensor(ucc-1))
             rcc_tensors.append(torch.tensor(rcc_tensor).to(torch.float32))
 
         return TensorDataset(

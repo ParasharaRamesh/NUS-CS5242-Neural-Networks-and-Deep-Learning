@@ -242,7 +242,7 @@ class KDE(nn.Module):
         k_sample_points = (
             torch.linspace(0, 1, steps=config.num_nodes)
             .repeat(batch_size, num_instances, 1)
-            .to(device)
+            .to(self.device)
         )
 
         # Calculate constants
