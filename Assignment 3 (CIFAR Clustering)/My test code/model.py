@@ -246,13 +246,13 @@ class KDE(nn.Module):
         )
 
         # Calculate constants
-        k_alpha = 1 / np.sqrt(2 * np.pi * config.sigma**2)
-        k_beta = -1 / (2 * config.sigma**2)
+        k_alpha = 1 / np.sqrt(2 * np.pi * config.sigma ** 2)
+        k_beta = -1 / (2 * config.sigma ** 2)
 
         # Iterate over features and calculate kernel density estimation for each feature
         out_list = []
         for i in range(num_features):
-            one_feature = data[:, :, i : i + 1].repeat(1, 1, config.num_nodes)
+            one_feature = data[:, :, i: i + 1].repeat(1, 1, config.num_nodes)
             k_diff_2 = (k_sample_points - one_feature) ** 2
             k_result = k_alpha * torch.exp(k_beta * k_diff_2)
             k_out_unnormalized = k_result.sum(dim=1)
@@ -266,6 +266,7 @@ class KDE(nn.Module):
         concat_out = torch.cat(out_list, dim=-1).to(self.device)
         return concat_out
 
+
 # UCC Prediction model
 class UCCPredictor(nn.Module):
     def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
@@ -273,27 +274,30 @@ class UCCPredictor(nn.Module):
         # Input size: [Batch, Bag, 128*4*4]
         # Output size: [Batch, 4]
         self.kde = KDE(device)
+
+        # input (Batch, 2048*11)
         self.stack = nn.Sequential(
-            nn.MaxPool1d(kernel_size=2),
+            Reshape(*[11, 2048]),
+            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 1024)
+            nn.BatchNorm1d(11),
             nn.ReLU(),
-            nn.AvgPool1d(kernel_size=2),
+            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 512)
+            nn.BatchNorm1d(11),
             nn.ReLU(),
-            nn.Linear(5632, 1024, dtype=torch.float32),
+            Reshape(*[11 * 512]),
+            nn.Linear(5632, 512, dtype=torch.float32),
+            nn.Dropout(0.2),
+            nn.ReLU(),
+            nn.Linear(512, 128, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(1024, 256, dtype=torch.float32),
-            nn.Dropout(0.1),
+            nn.Linear(128, 32, dtype=torch.float32),
             nn.ReLU(),
-            nn.Linear(256, 32, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float32),
-            nn.Sigmoid()
+            nn.Linear(32, ucc_limit, dtype=torch.float32)
         )
 
         # Input size: [Batch, Bag, 128*4*4]
         self.stack_without_kde = nn.Sequential(
-            nn.Linear(6144, 1024, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(1024, 256, dtype=torch.float32),
@@ -302,8 +306,7 @@ class UCCPredictor(nn.Module):
             nn.Linear(256, 32, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float32),
-            nn.Sigmoid()
+            nn.Linear(32, ucc_limit, dtype=torch.float32)
         )
 
         # Initialize weights using Xavier initialization with normal distribution
@@ -315,18 +318,18 @@ class UCCPredictor(nn.Module):
         print("UCC Predictor model initialized")
 
     def forward(self, x):
-        '''
-        #Commenting out KDE as it is not learning much
+        # Commenting out KDE as it is not learning much
 
         kde_prob_distributions = self.kde(x)  # shape (Batch, 22528)
         ucc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 4)
-        '''
 
-        #This is without KDE at all
-        x = x.view(config.batch_size * config.bag_size, 128, 4, 4).to(config.device)
-        x = nn.Conv2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32, device=config.device)(x)
-        x = x.view(-1)
-        ucc_logits = self.stack_without_kde(x)
+        # This is without KDE at all
+        # batch_size, bag_size, features = x.size()
+        # x = x.view(-1, bag_size * features).to(config.device)
+        # x = nn.MaxPool1d(4)(x)
+        # x = nn.AvgPool1d(4)(x)
+        # x = nn.Linear(x.size(1), 1024, device=config.device)(x)
+        # ucc_logits = self.stack_without_kde(x)
         return ucc_logits
 
 
@@ -369,21 +372,23 @@ class RCCPredictor(nn.Module):
         # Output size: [Batch, 4]
         self.kde = KDE(device)
         self.stack = nn.Sequential(
-            nn.MaxPool1d(kernel_size=2),
+            Reshape(*[11, 2048]),
+            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 1024)
+            nn.BatchNorm1d(11),
             nn.ReLU(),
-            nn.AvgPool1d(kernel_size=2),
+            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 512)
+            nn.BatchNorm1d(11),
             nn.ReLU(),
-            nn.Linear(5632, 1024, dtype=torch.float32),
+            Reshape(*[11 * 512]),
+            nn.Linear(5632, 512, dtype=torch.float32),
+            nn.Dropout(0.2),
+            nn.ReLU(),
+            nn.Linear(512, 128, dtype=torch.float32),
             nn.Dropout(0.1),
             nn.ReLU(),
-            nn.Linear(1024, 256, dtype=torch.float32),
-            nn.Dropout(0.1),
+            nn.Linear(128, 32, dtype=torch.float32),
             nn.ReLU(),
-            nn.Linear(256, 32, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(32, rcc_limit, dtype=torch.float32),
-            nn.ReLU()
+            nn.Linear(32, rcc_limit, dtype=torch.float32)
         )
 
         # Input size: [Batch, Bag, 128*4*4]
@@ -398,7 +403,7 @@ class RCCPredictor(nn.Module):
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(32, rcc_limit, dtype=torch.float32),
-            nn.Sigmoid()
+            nn.ReLU()
         )
 
         # Initialize weights using Xavier initialization with normal distribution
@@ -472,9 +477,10 @@ if __name__ == '__main__':
     #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # Combined UCC model
-    # combined_ucc = CombinedUCCModel(device).to(device)
-    # summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    combined_ucc = CombinedUCCModel(device).to(device)
+    summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+            verbose=1)
 
     # Combined RCC model
-    # combined_rcc = CombinedRCCModel(device).to(device)
-    # summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    combined_rcc = CombinedRCCModel(device).to(device)
+    summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
