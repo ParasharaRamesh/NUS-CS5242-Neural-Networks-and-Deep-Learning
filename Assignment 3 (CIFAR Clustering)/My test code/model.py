@@ -414,16 +414,17 @@ class RCCPredictor(nn.Module):
         print("RCC Predictor module initilized")
 
     def forward(self, x):
-        '''
         # Uncomment this to try it with KDE
         kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
         rcc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 10)
-        '''
 
+        '''
+        #This is without KDE
         x = x.view(config.batch_size * config.bag_size, 128, 4, 4).to(config.device)
         x = nn.Conv2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32, device=config.device)(x)
         x = x.view(-1)
         rcc_logits = self.stack_without_kde(x)
+        '''
         return rcc_logits
 
 
@@ -483,4 +484,5 @@ if __name__ == '__main__':
 
     # Combined RCC model
     combined_rcc = CombinedRCCModel(device).to(device)
-    summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0,col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+            verbose=1)

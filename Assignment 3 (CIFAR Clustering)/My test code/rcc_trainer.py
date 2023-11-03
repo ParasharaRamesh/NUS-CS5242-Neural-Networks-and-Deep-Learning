@@ -121,14 +121,14 @@ class RCCTrainer:
 
             # iterate over each batch
             for batch_idx, data in enumerate(self.train_loader):
-                images, one_hot_ucc_labels, rcc_labels = data
+                images, ucc_labels, rcc_labels = data
 
                 # forward propogate through the combined model
                 rcc_logits, ucc_logits, decoded = self.rcc_model(images)
 
                 # calculate losses from both models for a batch of bags
                 ae_loss = self.calculate_autoencoder_loss(images, decoded)
-                ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, one_hot_ucc_labels, True)
+                ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, ucc_labels, True)
                 rcc_loss, batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(rcc_logits, rcc_labels, True)
 
                 # calculate combined loss
@@ -256,14 +256,14 @@ class RCCTrainer:
         return ae_loss
 
     # DONE
-    def calculate_ucc_loss_and_acc(self, ucc_logits, one_hot_ucc_labels, is_train_mode=True):
+    def calculate_ucc_loss_and_acc(self, ucc_logits, ucc_labels, is_train_mode=True):
         # compute the ucc_loss between [batch, 4]
-        ucc_loss = self.ucc_loss_criterion(ucc_logits, one_hot_ucc_labels)
+        ucc_loss = self.ucc_loss_criterion(ucc_logits, ucc_labels)
 
         # compute the batch stats right here and save it
         ucc_probs = nn.Softmax(dim=1)(ucc_logits)
         predicted = torch.argmax(ucc_probs, 1)
-        labels = torch.argmax(one_hot_ucc_labels, 1)
+        labels = ucc_labels
         batch_correct_predictions = (predicted == labels).sum().item()
         batch_size = labels.size(0)
 
@@ -350,7 +350,7 @@ class RCCTrainer:
             self.rcc_model.eval()
 
             for val_batch_idx, val_data in enumerate(self.val_loader):
-                val_images, val_one_hot_ucc_labels, val_rcc_labels = val_data
+                val_images, val_ucc_labels, val_rcc_labels = val_data
 
                 # forward propogate through the model
                 val_rcc_logits, val_ucc_logits, val_decoded = self.rcc_model(val_images)
@@ -358,7 +358,7 @@ class RCCTrainer:
                 # calculate losses from both models for a batch of bags
                 val_batch_ae_loss = self.calculate_autoencoder_loss(val_images, val_decoded)
                 val_batch_ucc_loss, val_batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(val_ucc_logits,
-                                                                                             val_one_hot_ucc_labels,
+                                                                                             val_ucc_labels,
                                                                                              False)
                 val_batch_rcc_loss, val_batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(val_rcc_logits,
                                                                                              val_rcc_labels,
@@ -502,7 +502,7 @@ class RCCTrainer:
             self.rcc_model.eval()
 
             for test_batch_idx, test_data in enumerate(self.test_loader):
-                test_images, test_one_hot_ucc_labels, test_rcc_labels = test_data
+                test_images, test_ucc_labels, test_rcc_labels = test_data
 
                 # forward propogate through the model
                 test_rcc_logits, test_ucc_logits, test_decoded = self.rcc_model(test_images)
@@ -510,7 +510,7 @@ class RCCTrainer:
                 # calculate losses from both models for a batch of bags
                 test_batch_ae_loss = self.calculate_autoencoder_loss(test_images, test_decoded)
                 test_batch_ucc_loss, test_batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(test_ucc_logits,
-                                                                                               test_one_hot_ucc_labels,
+                                                                                               test_ucc_labels,
                                                                                                False)
                 test_batch_rcc_loss, test_batch_rcc_accuracy = self.calculate_rcc_loss_and_acc(test_rcc_logits,
                                                                                                test_rcc_labels,
