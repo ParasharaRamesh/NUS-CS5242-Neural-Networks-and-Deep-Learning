@@ -235,14 +235,14 @@ class UCCTrainer:
         return ae_loss
 
     def calculate_ucc_loss_and_acc(self, ucc_logits, ucc_labels, is_train_mode=True):
-        # compute the ucc_loss between [batch, 4]
+        # compute the ucc_loss between [batch, 4], [Batch,] batch size = 2
         ucc_loss = self.ucc_loss_criterion(ucc_logits, ucc_labels)
 
         # compute the batch stats right here and save it
         ucc_probs = nn.Softmax(dim=1)(ucc_logits)
-        predicted = torch.argmax(ucc_probs, 1)
-        labels = ucc_labels
-        batch_correct_predictions = (predicted == labels).sum().item()
+        predicted = torch.argmax(ucc_probs, 1) # class [8,6]
+        labels = ucc_labels # class [7,6]
+        batch_correct_predictions = (predicted == labels).sum().item() # 0.5
         batch_size = labels.size(0)
 
         # calculate batchwise accuracy/ucc_loss

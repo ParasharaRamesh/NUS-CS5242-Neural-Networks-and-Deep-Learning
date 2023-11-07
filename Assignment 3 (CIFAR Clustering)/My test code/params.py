@@ -11,7 +11,7 @@ class Config:
     sigma = 0.1
     num_nodes = 11
 
-    learning_rate = 0.02
+    learning_rate = 0.02 #TODO.5 make it 0.0001 ( 2e-4)
     weight_decay = 1e-4
     grad_clip = 1.5
 

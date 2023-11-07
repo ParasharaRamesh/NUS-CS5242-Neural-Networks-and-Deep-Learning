@@ -201,8 +201,16 @@ class Autoencoder(nn.Module):
             nn.Linear(128 * 4 * 4, 128 * 4 * 4),
             nn.Dropout(0.1),
             Reshape(*[128, 4, 4]),
-            nn.Sigmoid()
+            nn.Sigmoid() #TODO.1 dont use sigmoid! ( input to KDE is sigmoid!)
         )
+
+        '''
+        TODO.2 
+        
+        keep latent feature size very small ( just 10 or 256), use linear layers, and adaptive pooling)
+        
+        TODO.3 train together..
+        '''
 
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 32, 8, 8]
@@ -272,7 +280,7 @@ class UCCPredictor(nn.Module):
     def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
         super().__init__()
         # Input size: [Batch, Bag, 128*4*4]
-        # Output size: [Batch, 4]
+        # Output size: [Batch * Bag, 2048*11]
         self.kde = KDE(device)
 
         # input (Batch, 2048*11)
@@ -293,7 +301,8 @@ class UCCPredictor(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 32, dtype=torch.float32),
             nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float32)
+            nn.Linear(32, ucc_limit, dtype=torch.float32),
+            #TODO.4 add softmax here.. explicitly
         )
 
         # Input size: [Batch, Bag, 128*4*4]
@@ -351,17 +360,18 @@ class CombinedUCCModel(nn.Module):
 
         # Stage 1. pass through autoencoder
         batch_size, bag_size, num_channels, height, width = batch.size()
-        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        batches_of_image_bags = batch.0(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        #
         encoded, decoded = self.autoencoder(
             batches_of_image_bags
         )  # we are feeding in Batch*bag images of shape (3,32,32)
 
         # Stage 2. use the autoencoder latent features to pass through the ucc predictor
-        # encoded shape is now (Batch* Bag, 128,4,4) -> (Batch, Bag, 128*4*4)
+        # encoded shape is now (Batch* Bag, 128,4,4) -> (Batch, Bag, 128*4*4) -> (2, 12, 2048)
         encoded = encoded.view(batch_size, bag_size, encoded.size(1) * encoded.size(2) * encoded.size(3))
         ucc_logits = self.ucc_predictor(encoded)
 
-        return ucc_logits, decoded
+        return ucc_logits, decoded # (Batch , 4), (Batch * Bag, 3,32,32)
 
 
 # RCC Prediction model
@@ -482,7 +492,7 @@ if __name__ == '__main__':
     summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
             verbose=1)
 
-    # Combined RCC model
-    combined_rcc = CombinedRCCModel(device).to(device)
-    summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
-            verbose=1)
+    # # Combined RCC model
+    # combined_rcc = CombinedRCCModel(device).to(device)
+    # summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+    #         verbose=1)
