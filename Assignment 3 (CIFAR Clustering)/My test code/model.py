@@ -5,8 +5,55 @@ import numpy as np
 from params import *
 import torch.nn.functional as F
 
-# Fancy approach which didnt work
 '''
+Old approach
+
+# Autoencoder
+class Autoencoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        # Input size: [batch, 3, 32, 32]
+        # Output size: [batch, 3, 32, 32]
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 32, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 64, 4, 4]
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            Reshape(*[128 * 4 * 4]),
+            nn.Linear(128 * 4 * 4, 128 * 4 * 4),
+            nn.Dropout(0.1),
+            Reshape(*[128, 4, 4]),
+            nn.Sigmoid() #TODO.1 dont use sigmoid! ( input to KDE is sigmoid!)
+        )
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 32, 8, 8]
+            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 16, 16, 16]
+            nn.ConvTranspose2d(32, 3, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 3, 32, 32]
+            nn.Sigmoid()
+        )
+
+        # Initialize weights using Xavier initialization with normal distribution
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.constant_(m.bias, 0.1)
+
+        print("Autoencoder model initialized!")
+
+    def forward(self, x):
+        x = x.to(torch.float32)
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded).to(torch.float32)
+        return encoded, decoded
+'''
+
 
 class ResidualZeroPaddingBlock(nn.Module):
     def __init__(
@@ -84,7 +131,16 @@ class WideResidualBlocks(nn.Module):
         return self.blocks(x)
 
 
-class NewAutoencoder(nn.Module):
+class Reshape(nn.Module):
+    def __init__(self, *target_shape):
+        super(Reshape, self).__init__()
+        self.target_shape = target_shape
+
+    def forward(self, x):
+        return x.view(x.size(0), *self.target_shape)
+
+
+class ResidualAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
@@ -123,7 +179,12 @@ class NewAutoencoder(nn.Module):
                 1,
                 down_sample=True,
             ),  # [b,256,2,2] -> 1024
-            nn.Sigmoid(),
+        )
+
+        self.feature_extractor = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(1024, 128),
+            nn.Sigmoid()
         )
 
         self.decoder = nn.Sequential(
@@ -156,8 +217,7 @@ class NewAutoencoder(nn.Module):
                 3,
                 kernel_size=3,
                 padding=1,
-            ),
-            nn.Sigmoid()
+            )
         )
 
         print("Autoencoder initialized")
@@ -165,73 +225,8 @@ class NewAutoencoder(nn.Module):
     def forward(self, x):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
-        return encoded, decoded
-
-
-'''
-
-
-class Reshape(nn.Module):
-    def __init__(self, *target_shape):
-        super(Reshape, self).__init__()
-        self.target_shape = target_shape
-
-    def forward(self, x):
-        return x.view(x.size(0), *self.target_shape)
-
-
-# Autoencoder
-class Autoencoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        # Input size: [batch, 3, 32, 32]
-        # Output size: [batch, 3, 32, 32]
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 32, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 12, 16, 16]
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 24, 8, 8]
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 64, 4, 4]
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            Reshape(*[128 * 4 * 4]),
-            nn.Linear(128 * 4 * 4, 128 * 4 * 4),
-            nn.Dropout(0.1),
-            Reshape(*[128, 4, 4]),
-            nn.Sigmoid() #TODO.1 dont use sigmoid! ( input to KDE is sigmoid!)
-        )
-
-        '''
-        TODO.2 
-        
-        keep latent feature size very small ( just 10 or 256), use linear layers, and adaptive pooling)
-        
-        TODO.3 train together..
-        '''
-
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 32, 8, 8]
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 16, 16, 16]
-            nn.ConvTranspose2d(32, 3, 4, stride=2, padding=1, dtype=torch.float32),  # [batch, 3, 32, 32]
-            nn.Sigmoid()
-        )
-
-        # Initialize weights using Xavier initialization with normal distribution
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0.1)
-
-        print("Autoencoder model initialized!")
-
-    def forward(self, x):
-        x = x.to(torch.float32)
-        encoded = self.encoder(x)
-        decoded = self.decoder(encoded).to(torch.float32)
-        return encoded, decoded
+        features = self.feature_extractor(encoded)
+        return features, decoded
 
 
 # KDE layer
@@ -274,42 +269,18 @@ class KDE(nn.Module):
         concat_out = torch.cat(out_list, dim=-1).to(self.device)
         return concat_out
 
-
-# UCC Prediction model
-class UCCPredictor(nn.Module):
-    def __init__(self, device=config.device, ucc_limit=config.ucc_limit):
+# UCC model
+class UCCModel(nn.Module):
+    def __init__(self, device=config.device, autoencoder_model=None, ucc_limit=config.ucc_limit):
         super().__init__()
-        # Input size: [Batch, Bag, 128*4*4]
-        # Output size: [Batch * Bag, 2048*11]
+        if autoencoder_model:
+            self.autoencoder = autoencoder_model
+        else:
+            self.autoencoder = ResidualAutoencoder()
+
         self.kde = KDE(device)
-
-        # input (Batch, 2048*11)
-        self.stack = nn.Sequential(
-            Reshape(*[11, 2048]),
-            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 1024)
-            nn.BatchNorm1d(11),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 512)
-            nn.BatchNorm1d(11),
-            nn.ReLU(),
-            Reshape(*[11 * 512]),
-            nn.Linear(5632, 512, dtype=torch.float32),
-            nn.Dropout(0.2),
-            nn.ReLU(),
-            nn.Linear(512, 128, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(128, 32, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float32),
-            #TODO.4 add softmax here.. explicitly
-        )
-
-        # Input size: [Batch, Bag, 128*4*4]
-        self.stack_without_kde = nn.Sequential(
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(1024, 256, dtype=torch.float32),
+        self.ucc_predictor = nn.Sequential(
+            nn.Linear(128*11, 256),
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(256, 32, dtype=torch.float32),
@@ -318,41 +289,7 @@ class UCCPredictor(nn.Module):
             nn.Linear(32, ucc_limit, dtype=torch.float32)
         )
 
-        # Initialize weights using Xavier initialization with normal distribution
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0.1)
-
-        print("UCC Predictor model initialized")
-
-    def forward(self, x):
-        # Commenting out KDE as it is not learning much
-
-        kde_prob_distributions = self.kde(x)  # shape (Batch, 22528)
-        ucc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 4)
-
-        # This is without KDE at all
-        # batch_size, bag_size, features = x.size()
-        # x = x.view(-1, bag_size * features).to(config.device)
-        # x = nn.MaxPool1d(4)(x)
-        # x = nn.AvgPool1d(4)(x)
-        # x = nn.Linear(x.size(1), 1024, device=config.device)(x)
-        # ucc_logits = self.stack_without_kde(x)
-        return ucc_logits
-
-
-# Combined UCC model
-class CombinedUCCModel(nn.Module):
-    def __init__(self, device=config.device, autoencoder_model=None):
-        super().__init__()
-        if autoencoder_model:
-            self.autoencoder = autoencoder_model
-        else:
-            self.autoencoder = Autoencoder()
-
-        self.ucc_predictor = UCCPredictor(device)
-        print("Combined UCC model initialized")
+        print(" UCC model initialized")
 
     def forward(self, batch):
         # Input size: [batch, bag, 3, 32, 32]
@@ -360,139 +297,130 @@ class CombinedUCCModel(nn.Module):
 
         # Stage 1. pass through autoencoder
         batch_size, bag_size, num_channels, height, width = batch.size()
-        batches_of_image_bags = batch.0(batch_size * bag_size, num_channels, height, width).to(torch.float32)
-        #
-        encoded, decoded = self.autoencoder(
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        features, decoded = self.autoencoder(
             batches_of_image_bags
         )  # we are feeding in Batch*bag images of shape (3,32,32)
 
         # Stage 2. use the autoencoder latent features to pass through the ucc predictor
-        # encoded shape is now (Batch* Bag, 128,4,4) -> (Batch, Bag, 128*4*4) -> (2, 12, 2048)
-        encoded = encoded.view(batch_size, bag_size, encoded.size(1) * encoded.size(2) * encoded.size(3))
-        ucc_logits = self.ucc_predictor(encoded)
+        # features shape is now (Batch* Bag, 128) -> (Batch, Bag, 128)
+        features = features.view(batch_size, bag_size, features.size(1))
+
+        #Stage 3. pass through kde to get output shape (Batch, 128*11)
+        kde_prob_distributions = self.kde(features)
+
+        # Stage 4. pass through the ucc_predictor stack to get 4 logits in the end
+        ucc_logits = self.ucc_predictor(kde_prob_distributions)
 
         return ucc_logits, decoded # (Batch , 4), (Batch * Bag, 3,32,32)
 
+    def get_encoder_features(self, batch):
+        batch_size, bag_size, num_channels, height, width = batch.size()
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        features, _ = self.autoencoder(
+            batches_of_image_bags
+        )  # we are feeding in Batch*bag images of shape (3,32,32)
+        return features
 
-# RCC Prediction model
-class RCCPredictor(nn.Module):
-    def __init__(self, device=config.device, rcc_limit=config.rcc_limit):
+    def get_kde_output(self, batch):
+        batch_size, bag_size, num_channels, height, width = batch.size()
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        features, _ = self.autoencoder(
+            batches_of_image_bags
+        )  # we are feeding in Batch*bag images of shape (3,32,32)
+        features = features.view(batch_size, bag_size, features.size(1))
+
+        kde_prob_distributions = self.kde(features)
+        return kde_prob_distributions
+
+
+# RCC model
+class RCCModel(nn.Module):
+    def __init__(self, device=config.device, autoencoder_model=None, ucc_limit=config.ucc_limit, rcc_limit=config.rcc_limit):
         super().__init__()
-        # Input size: [Batch, Bag, 1024]
-        # Output size: [Batch, 4]
-        self.kde = KDE(device)
-        self.stack = nn.Sequential(
-            Reshape(*[11, 2048]),
-            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 1024)
-            nn.BatchNorm1d(11),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=11, out_channels=11, kernel_size=2, stride=2),  # output shape (Batch, 11, 512)
-            nn.BatchNorm1d(11),
-            nn.ReLU(),
-            Reshape(*[11 * 512]),
-            nn.Linear(5632, 512, dtype=torch.float32),
-            nn.Dropout(0.2),
-            nn.ReLU(),
-            nn.Linear(512, 128, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(128, 32, dtype=torch.float32),
-            nn.ReLU(),
-            nn.Linear(32, rcc_limit, dtype=torch.float32)
-        )
+        if autoencoder_model:
+            self.autoencoder = autoencoder_model
+        else:
+            self.autoencoder = ResidualAutoencoder()
 
-        # Input size: [Batch, Bag, 128*4*4]
-        self.stack_without_kde = nn.Sequential(
-            nn.Linear(6144, 1024, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(1024, 256, dtype=torch.float32),
+        self.kde = KDE(device)
+
+        self.shared_predictor_stack =  nn.Sequential(
+            nn.Linear(128 * 11, 256),
             nn.Dropout(0.1),
             nn.ReLU(),
             nn.Linear(256, 32, dtype=torch.float32),
             nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(32, rcc_limit, dtype=torch.float32),
             nn.ReLU()
         )
 
-        # Initialize weights using Xavier initialization with normal distribution
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                nn.init.xavier_uniform_(m.weight)
+        self.ucc_predictor = nn.Linear(32, ucc_limit, dtype=torch.float32)
+        self.rcc_predictor = nn.Linear(32, rcc_limit, dtype=torch.float32)
 
-        print("RCC Predictor module initilized")
-
-    def forward(self, x):
-        # Uncomment this to try it with KDE
-        kde_prob_distributions = self.kde(x)  # shape (Batch, 8448)
-        rcc_logits = self.stack(kde_prob_distributions)  # shape (Batch, 10)
-
-        '''
-        #This is without KDE
-        x = x.view(config.batch_size * config.bag_size, 128, 4, 4).to(config.device)
-        x = nn.Conv2d(128, 64, 4, stride=2, padding=1, dtype=torch.float32, device=config.device)(x)
-        x = x.view(-1)
-        rcc_logits = self.stack_without_kde(x)
-        '''
-        return rcc_logits
-
-
-# Combined RCC model
-class CombinedRCCModel(nn.Module):
-    def __init__(self, device=config.device, autoencoder_model=None):
-        super().__init__()
-
-        if autoencoder_model:
-            self.autoencoder = autoencoder_model
-        else:
-            self.autoencoder = Autoencoder()
-
-        self.ucc_predictor = UCCPredictor(device)
-        self.rcc_predictor = RCCPredictor(device)
-
-        print("Combined RCC Predictor initialized")
+        print(" UCC model initialized")
 
     def forward(self, batch):
         # Input size: [batch, bag, 3, 32, 32]
-        # output size: [batch, 4] (ucc_logits), [batch, 10] (rcc_logits), [batch * bag,3,32,32] ( decoded images)
+        # output size: [batch, 4] (ucc_logits), [batch * bag,3,32,32] ( decoded images)
 
         # Stage 1. pass through autoencoder
         batch_size, bag_size, num_channels, height, width = batch.size()
         batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
-        encoded, decoded = self.autoencoder(
+        features, decoded = self.autoencoder(
             batches_of_image_bags
         )  # we are feeding in Batch*bag images of shape (3,32,32)
-        # encoded shape is now (Batch* Bag, 256,4,4) -> (Batch, Bag, 256*4*4)
-        encoded = encoded.view(batch_size, bag_size, encoded.size(1) * encoded.size(2) * encoded.size(3))
 
         # Stage 2. use the autoencoder latent features to pass through the ucc predictor
-        ucc_logits = self.ucc_predictor(encoded)
+        # features shape is now (Batch* Bag, 128) -> (Batch, Bag, 128)
+        features = features.view(batch_size, bag_size, features.size(1))
 
-        # Stage 3. use the autoencoder latent features to pass through the rcc predictor
-        rcc_logits = self.rcc_predictor(encoded)
-        return rcc_logits, ucc_logits, decoded
+        # Stage 3. pass through kde to get output shape (Batch, 128*11)
+        kde_prob_distributions = self.kde(features)
+
+        #Stage 4. pass through common stack
+        common_features = self.shared_predictor_stack(kde_prob_distributions)
+
+        # Stage 5. get the ucc logits
+        ucc_logits = self.ucc_predictor(common_features)
+
+        # Stage 6. get the rcc logits
+        rcc_logits = self.rcc_predictor(common_features)
+
+        return rcc_logits, ucc_logits, decoded  # , (Batch , 10), (Batch , 4), (Batch * Bag, 3,32,32)
+
+    def get_encoder_features(self, batch):
+        batch_size, bag_size, num_channels, height, width = batch.size()
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        features, _ = self.autoencoder(
+            batches_of_image_bags
+        )  # we are feeding in Batch*bag images of shape (3,32,32)
+        return features
+
+    def get_kde_output(self, batch):
+        batch_size, bag_size, num_channels, height, width = batch.size()
+        batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
+        features, _ = self.autoencoder(
+            batches_of_image_bags
+        )  # we are feeding in Batch*bag images of shape (3,32,32)
+        features = features.view(batch_size, bag_size, features.size(1))
+
+        kde_prob_distributions = self.kde(features)
+        return kde_prob_distributions
 
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Autoencoder model test
-    # autoencoder = NewAutoencoder().to(device)
-    # autoencoder = Autoencoder().to(device)
+    # autoencoder = ResidualAutoencoder().to(device)
     # summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
-    # KDE Layer test
-    # kde = KDE(device).to(device)
-    # summary(kde, input_size=(10, 48 * 16), device=device, batch_dim=0,
-    #         col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
+    #  UCC model
+    # ucc = UCCModel(device).to(device)
+    # summary(ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+    #         verbose=1)
 
-    # Combined UCC model
-    combined_ucc = CombinedUCCModel(device).to(device)
-    summary(combined_ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
-            verbose=1)
-
-    # # Combined RCC model
-    # combined_rcc = CombinedRCCModel(device).to(device)
-    # summary(combined_rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+    # #  RCC model
+    # rcc = RCCModel(device).to(device)
+    # summary(rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
     #         verbose=1)
