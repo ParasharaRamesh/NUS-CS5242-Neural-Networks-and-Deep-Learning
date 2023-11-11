@@ -1,20 +1,10 @@
-'''
-TODO:
-1. do the dataset the same way he did
-2. use the same logic for your rcc dataset as well
-3. do the same thing for the autoencoder dataloader
-4. do the same thing for the kde dataloader
-
-'''
-
+import random
 from itertools import combinations
 import numpy as np
-import torch
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 from torchvision import transforms
 from params import *
-
 
 class UCCDataset(Dataset):
     def __init__(self, x, y, num_iter, train_mode):
@@ -23,9 +13,9 @@ class UCCDataset(Dataset):
         self.num_iter = num_iter
         self.train_mode = train_mode
 
-        self.bag_size = config["bag_size"]
-        self.num_classes = config["num_classes"]
-        self.ucc_limit = config["ucc_limit"]
+        self.bag_size = config.bag_size
+        self.num_classes = config.num_classes
+        self.ucc_limit = config.ucc_limit
 
         # pick the augmentation based on the mode
         if self.train_mode:
@@ -65,11 +55,11 @@ class UCCDataset(Dataset):
         self.ucc_to_all_combos = self.get_ucc_to_all_combinations_dict()
 
     def __len__(self):
-        return self.num_iter * config["batch_size"]
+        return self.num_iter * config.batch_size
 
     def get_class_label_to_img_idxs_dict(self):
         class_label_to_img_idxs_dict = dict()
-        for label_value in range(self.ucc_limit):
+        for label_value in range(self.num_classes):
             label_key = f"class{label_value}"
 
             img_idxs = np.where(self.y == label_value)[0]
@@ -78,41 +68,35 @@ class UCCDataset(Dataset):
         return class_label_to_img_idxs_dict
 
     def get_ucc_to_all_combinations_dict(self):
-        ucc_labels = np.arange(self.ucc_limit)
+        class_labels = np.arange(self.num_classes)
         ucc_to_all_combos_dict = dict()
 
         for ucc in range(1, self.ucc_limit + 1):  # go from 1->4
             ucc_key = f"ucc{ucc}"
 
             ucc_bag_labels = list()
-            for unique_ucc_combo in combinations(ucc_labels, ucc):
+            for unique_ucc_combo in combinations(class_labels, ucc):
                 ucc_bag_labels.append(np.array(unique_ucc_combo))
 
             ucc_to_all_combos_dict[ucc_key] = np.array(ucc_bag_labels)
 
         return ucc_to_all_combos_dict
 
-    #TODO.x from here
     def __getitem__(self, index):
-        ucc_label = index % self.ucc_limit
-        label_freq_list = self.get_instances_per_label_in_bag(ucc_label)
+        ucc_label = (index % self.ucc_limit) + 1
+        ucc_combo_with_bag_counts = self.get_random_ucc_combo_and_its_bag_counts(ucc_label)
 
         selected_idxs = []
-        for label, freq in label_freq_list:
-            label_key = f"label{label}"
-            img_idxs = self.class_label_to_img_idxs[label_key]
-            N = len(img_idxs)
-            selected_idxs += list(img_idxs[np.random.randint(0, N, size=freq)])
+        for label, freq in ucc_combo_with_bag_counts:
+            label_key = f"class{label}"
+            label_img_idxs = self.class_label_to_img_idxs[label_key]
+            selected_idxs.extend(list(label_img_idxs[np.random.randint(0, len(label_img_idxs), size=freq)]))
 
-        inp = self.preprocess_inputs(selected_idxs)
-        if self.return_classes:
-            assert len(label_freq_list) == 1
-            return inp, label_freq_list[0][0]
-        else:
-            return inp, ucc_label
+        imgs = self.get_imgs_from_idxs(selected_idxs)
+        return imgs, ucc_label
 
-    def get_instances_per_label_in_bag(self, ucc_label):
-        class_key = f"class_{ucc_label}"
+    def get_random_ucc_combo_and_its_bag_counts(self, ucc_label):
+        class_key = f"ucc{ucc_label}"
 
         # Get unique combination of cifar10 labels for ucc label
         ucc_bag_labels_list = self.ucc_to_all_combos[class_key]
@@ -130,16 +114,23 @@ class UCCDataset(Dataset):
             res.append((label, freq))
         return res
 
-    def preprocess_inputs(self, idxs):
+    def get_imgs_from_idxs(self, idxs):
         imgs = self.x[idxs]
         res = []
         for i in range(len(imgs)):
             img = Image.fromarray(imgs[i])
-            res.append(self.transforms(img).unsqueeze(0))
+            random_transform = random.choice(self.transforms)
+            res.append(random_transform(img).unsqueeze(0))
         res = torch.concatenate(res, dim=0)
         return res
 
-# TODO.1 dataloader function for ucc
-# TODO.2 dataloader function for rcc
-# TODO.3 dataloader function for kde
-# TODO.4 dataloader function for autoencoder ( can be the same thing)
+
+if __name__ == '__main__':
+    data = np.load(config.datasets_path)
+    x_train, y_train = data["x_train"], data["y_train"]
+    train_dataset = UCCDataset(x_train, y_train, num_iter=10, train_mode=True)
+    inp1, label1 = train_dataset[0]
+    inp2, label2 = train_dataset[1]
+    inp3, label3 = train_dataset[2]
+    inp4, label4 = train_dataset[3]
+    print("done test")
