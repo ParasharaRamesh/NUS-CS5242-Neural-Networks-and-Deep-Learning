@@ -71,11 +71,11 @@ class UCCDataset(Dataset):
         class_labels = np.arange(self.num_classes)
         ucc_to_all_combos_dict = dict()
 
-        for ucc in range(1, self.ucc_limit + 1):  # go from 1->4
+        for ucc in range(self.ucc_limit):  # go from 1->4
             ucc_key = f"ucc{ucc}"
 
             ucc_bag_labels = list()
-            for unique_ucc_combo in combinations(class_labels, ucc):
+            for unique_ucc_combo in combinations(class_labels, ucc+1): #plus 1 here
                 ucc_bag_labels.append(np.array(unique_ucc_combo))
 
             ucc_to_all_combos_dict[ucc_key] = np.array(ucc_bag_labels)
@@ -83,7 +83,7 @@ class UCCDataset(Dataset):
         return ucc_to_all_combos_dict
 
     def __getitem__(self, index):
-        ucc_label = (index % self.ucc_limit) + 1
+        ucc_label = index % self.ucc_limit
         ucc_combo_with_bag_counts = self.get_random_ucc_combo_and_its_bag_counts(ucc_label)
 
         selected_idxs = []

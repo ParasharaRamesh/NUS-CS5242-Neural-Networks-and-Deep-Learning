@@ -212,10 +212,9 @@ class UCCTrainer:
     def calculate_ucc_loss_and_acc(self, ucc_logits, ucc_labels, is_train_mode=True):
         # compute the batch stats right here and save it
         ucc_probs = nn.Softmax(dim=1)(ucc_logits)
-        predicted = torch.argmax(ucc_probs, 1)  # class [8,6]
-        labels = ucc_labels  # class [7,6]
-        batch_correct_predictions = (predicted == labels).sum().item()  # 0.5
-        batch_size = labels.size(0)
+        predicted = torch.argmax(ucc_probs, 1) # adding one so that it can be match properly
+        batch_correct_predictions = (predicted == ucc_labels).sum().item()
+        batch_size = ucc_labels.size(0)
         batch_ucc_accuracy = batch_correct_predictions / batch_size
 
         # compute the ucc_loss between [batch, 4], [Batch,] batch size = 2
@@ -292,9 +291,7 @@ class UCCTrainer:
             "avg_val_ucc_loss": avg_val_ucc_loss,
             "avg_val_ucc_training_accuracy": avg_val_ucc_training_accuracy
         }
-        print(stats)
-        print("Finished computing val stats, now showing a sample reconstruction")
-        
+
         # show some sample predictions
         self.show_sample_reconstructions(self.val_loader)
         return stats
@@ -410,9 +407,6 @@ class UCCTrainer:
             "avg_test_ucc_loss": avg_test_ucc_loss,
             "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
         }
-        print(stats)
-
-        print("Now going to show a sample reconstruction")
         # show some sample predictions
         self.show_sample_reconstructions(self.test_loader)
         return stats

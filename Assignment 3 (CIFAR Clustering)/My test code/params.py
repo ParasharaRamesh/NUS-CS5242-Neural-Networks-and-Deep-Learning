@@ -19,17 +19,20 @@ class Config:
     weight_decay = 1e-4
     grad_clip = 0.7
 
-    batch_size = 10
+    # batch_size = 20
+    batch_size = 2
     ucc_limit = 4
     rcc_limit = 10
     bag_size = 24
     num_classes = 10
 
     # train_steps = 100000
-    train_steps = 1000 # for local testing
+    train_steps = 100 # for local testing
     test_steps = 1000
-    val_steps = 20
-    debug_steps = 100
+    val_steps = 10
+    # val_steps = 100
+    # debug_steps = 1000
+    debug_steps = 10
 
 
 config = Config()
