@@ -33,6 +33,7 @@ class Config:
     # val_steps = 100
     # debug_steps = 1000
     debug_steps = 10
+    saver_steps = 10
 
 
 config = Config()
