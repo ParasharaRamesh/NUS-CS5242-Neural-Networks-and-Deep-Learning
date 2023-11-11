@@ -15,10 +15,11 @@ class Config:
     weight_decay = 1e-4
     grad_clip = 1.5
 
-    batch_size = 1
+    batch_size = 10
     ucc_limit = 4
     rcc_limit = 10
     bag_size = 24
+    num_classes = 10
 
 
 config = Config()
