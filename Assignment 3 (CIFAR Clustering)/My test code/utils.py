@@ -1,5 +1,13 @@
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
+# set random seed
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 def plot_ucc_model_stats(
         experiment, epochs,

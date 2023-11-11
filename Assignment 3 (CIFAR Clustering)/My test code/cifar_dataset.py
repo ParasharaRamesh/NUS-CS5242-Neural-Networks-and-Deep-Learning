@@ -14,6 +14,11 @@ class CIFARDataset(Dataset):
         self.num_iter = num_iter
         self.train_mode = train_mode
 
+        self.num_classes = config.num_classes
+
+        # for each class get all the indexes of images
+        self.class_label_to_img_idxs = self.get_class_label_to_img_idxs_dict()
+
         # pick the augmentation based on the mode
         if self.train_mode:
             self.transforms = [
@@ -57,11 +62,19 @@ class CIFARDataset(Dataset):
     def get_label_from_idx(self, index):
         return self.y[index][0]
 
+    def get_class_label_to_img_idxs_dict(self):
+        class_label_to_img_idxs_dict = dict()
+        for label in range(self.num_classes):
+            img_idxs = np.where(self.y == label)[0]
+            class_label_to_img_idxs_dict[label] = img_idxs
+
+        return class_label_to_img_idxs_dict
+
     def __getitem__(self, index):
-        index = index % len(self.x)
-        img = self.get_img_from_idx(index)
-        label = self.get_label_from_idx(index)
-        return img, label
+        label = index % self.num_classes
+        label_img_idxs = self.class_label_to_img_idxs[label]
+        random_idx = random.choice(label_img_idxs)
+        return self.get_img_from_idx(random_idx), self.get_label_from_idx(random_idx)
 
 if __name__ == '__main__':
     data = np.load(config.datasets_path)

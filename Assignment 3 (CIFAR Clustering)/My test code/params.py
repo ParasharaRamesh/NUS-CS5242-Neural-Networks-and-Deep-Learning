@@ -17,7 +17,7 @@ class Config:
 
     learning_rate = 1e-4
     weight_decay = 1e-4
-    grad_clip = 1.5 #TODO.x revise this
+    grad_clip = 0.7
 
     batch_size = 10
     ucc_limit = 4
@@ -25,9 +25,11 @@ class Config:
     bag_size = 24
     num_classes = 10
 
-    train_steps = 100000
+    # train_steps = 100000
+    train_steps = 1000 # for local testing
     test_steps = 1000
-    val_steps = 200
+    val_steps = 20
+    debug_steps = 100
 
 
 config = Config()

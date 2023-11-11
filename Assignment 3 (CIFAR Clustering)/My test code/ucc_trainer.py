@@ -14,8 +14,9 @@ from loss import *
 class UCCTrainer:
     def __init__(self,
                  name, ucc_model,
-                 dataset, save_dir, device=config.device,
-                 importances={"ae": 0.3, "ucc": 0.7}
+                 dataloader, save_dir, device=config.device,
+                 importances={"ae": 0.5, "ucc": 0.5},
+                 use_ssim=False
                  ):
         self.name = name
         self.save_dir = save_dir
@@ -25,13 +26,9 @@ class UCCTrainer:
         self.ae_importance = importances["ae"]
         self.ucc_importance = importances["ucc"]
 
-        # data
-        self.dataset = dataset
-        self.train_loader = dataset.ucc_train_dataloader
-        self.test_loader = dataset.ucc_test_dataloader
-        self.val_loader = dataset.ucc_val_dataloader
-        self.kde_loaders = dataset.kde_test_dataloaders  # each dataloader here will return shape of (batch, bag, 3,32,32) of a pure dataset
-        self.autoencoder_loaders = dataset.autoencoder_test_dataloaders
+        # dataloaders
+        self.train_loader, self.val_loader, self.test_loader = dataloader.get_ucc_dataloaders()
+        self.cifar_train_loader, self.cifar_val_loader, self.cifar_test_loader = dataloader.get_cifar_dataloaders()
 
         # create the directory if it doesn't exist!
         os.makedirs(self.save_dir, exist_ok=True)
@@ -44,16 +41,14 @@ class UCCTrainer:
                                         weight_decay=config.weight_decay)
 
         # Loss criterion(s)
-        # self.ae_loss_criterion = nn.MSELoss()
-        self.ae_loss_criterion = SSIMLoss()
+        self.ae_loss_criterion = SSIMLoss() if use_ssim else nn.MSELoss()
         self.ucc_loss_criterion = nn.CrossEntropyLoss()
 
         # Transforms
         self.tensor_to_img_transform = transforms.ToPILImage()
 
         # Values which can change based on loaded checkpoint
-        self.start_epoch = 0
-        self.epoch_numbers = []
+        self.steps = []
         self.training_ae_losses = []
         self.training_ucc_losses = []
         self.training_losses = []
@@ -67,132 +62,115 @@ class UCCTrainer:
         self.train_correct_predictions = 0
         self.train_total_batches = 0
 
+        # Debug saver lists (i.e. capture these stats for every debug_steps)
+        self.debug_ae_losses = []
+        self.debug_ucc_losses = []
+        self.debug_total_losses = []
+
     # main train code
     def train(self,
-              num_epochs,
-              resume_epoch_num=None,
+              resume_steps=None,
               load_from_checkpoint=False,
-              epoch_saver_count=2):
+              saver_steps=100):
         torch.cuda.empty_cache()
 
         # initialize the params from the saved checkpoint
-        self.init_params_from_checkpoint_hook(load_from_checkpoint, resume_epoch_num)
+        self.init_params_from_checkpoint_hook(load_from_checkpoint, resume_steps)
 
         # set up scheduler
-        self.init_scheduler_hook(num_epochs)
+        self.init_scheduler_hook()
 
-        # Custom progress bar for total epochs with color and displaying average epoch batch_loss
-        total_progress_bar = tqdm(
-            total=num_epochs, desc=f"Total Epochs", position=0,
-            bar_format="{desc}: {percentage}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
-            dynamic_ncols=True, ncols=100, colour='red'
+        # Custom progress bar for each epoch with color
+        batch_progress_bar = tqdm(
+            total=len(self.train_loader),
+            desc=f"Steps",
+            position=1,
+            leave=False,
+            dynamic_ncols=True,
+            ncols=100,
+            colour='green'
         )
 
-        # Train loop
-        for epoch in range(self.start_epoch, self.start_epoch + num_epochs):
-            # Custom progress bar for each epoch with color
-            epoch_progress_bar = tqdm(
-                total=len(self.train_loader),
-                desc=f"Epoch {epoch + 1}/{self.start_epoch + num_epochs}",
-                position=1,
-                leave=False,
-                dynamic_ncols=True,
-                ncols=100,
-                colour='green'
-            )
+        # set all models to train mode
+        self.ucc_model.train()
 
-            # set all models to train mode
-            self.ucc_model.train()
+        # iterate over each batch
+        for step, data in enumerate(self.train_loader):
+            # zero grad
+            self.ucc_optimizer.zero_grad()
 
-            # set the epoch training batch_loss
-            epoch_training_loss = 0.0
-            epoch_ae_loss = 0.0
-            epoch_ucc_loss = 0.0
+            images, ucc_labels = data
 
-            # iterate over each batch
-            for batch_idx, data in enumerate(self.train_loader):
-                images, ucc_labels = data
+            # forward propogate through the combined model
+            ucc_logits, decoded = self.ucc_model(images)
 
-                # forward propogate through the combined model
-                ucc_logits, decoded = self.ucc_model(images)
+            # calculate losses from both models for a batch of bags
+            ae_loss = self.calculate_autoencoder_loss(images, decoded)
+            ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, ucc_labels, True)
 
-                # calculate losses from both models for a batch of bags
-                ae_loss = self.calculate_autoencoder_loss(images, decoded)
-                ucc_loss, batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(ucc_logits, ucc_labels, True)
+            # calculate combined loss
+            step_loss = (self.ae_importance * ae_loss) + (self.ucc_importance * ucc_loss)
 
-                # calculate combined loss
-                batch_loss = (self.ae_importance * ae_loss) + (self.ucc_importance * ucc_loss)
+            # do loss backward for all losses
+            step_loss.backward()
 
-                # do loss backward for all losses
-                batch_loss.backward()
+            # Gradient clipping
+            nn.utils.clip_grad_norm_(self.ucc_model.parameters(), max_norm=config.grad_clip)
 
-                # Gradient clipping (commenting this out as it is causing colab to crash!)
-                nn.utils.clip_grad_value_(self.ucc_model.parameters(), config.grad_clip)
+            # do optimizer step
+            self.ucc_optimizer.step()
 
-                # do optimizer step and zerograd for autoencoder model
-                self.ucc_optimizer.step()
-                self.ucc_optimizer.zero_grad()
+            # scheduler update (remove if it doesnt work!)
+            self.ucc_scheduler.step()
 
-                # scheduler update (remove if it doesnt work!)
-                self.ucc_scheduler.step()
+            # add to epoch batch_loss
+            self.debug_ae_losses.append(ae_loss.item())
+            self.debug_ucc_losses.append(ucc_loss.item())
+            self.debug_total_losses.append(step_loss.item())
 
-                # add to epoch batch_loss
-                epoch_training_loss += batch_loss.item()
-                epoch_ae_loss += ae_loss.item()
-                epoch_ucc_loss += ucc_loss.item()
+            # Update the epoch progress bar (overwrite in place)
+            batch_stats = {
+                "batch_loss": step_loss.item(),
+                "batch_ae_loss": ae_loss.item(),
+                "batch_ucc_loss": ucc_loss.item(),
+                "batch_ucc_acc": batch_ucc_accuracy
+            }
 
-                # Update the epoch progress bar (overwrite in place)
-                batch_stats = {
-                    "batch_loss": batch_loss.item(),
-                    "ae_loss": ae_loss.item(),
-                    "ucc_loss": ucc_loss.item(),
-                    "batch_ucc_acc": batch_ucc_accuracy
-                }
+            batch_progress_bar.set_postfix(batch_stats)
+            batch_progress_bar.update(1)
 
-                epoch_progress_bar.set_postfix(batch_stats)
-                epoch_progress_bar.update(1)
+            # Compute the average stats for every config.debug_steps steps
+            if (step + 1) % config.debug_steps == 0:
+                # calculate average epoch train statistics
+                avg_train_stats = self.calculate_avg_train_stats_hook()
 
-            # close the epoch progress bar
-            epoch_progress_bar.close()
+                # calculate validation statistics
+                avg_val_stats = self.validation_hook()
 
-            # calculate average epoch train statistics
-            avg_train_stats = self.calculate_avg_train_stats_hook(epoch_training_loss, epoch_ae_loss, epoch_ucc_loss)
+                # Store running history
+                self.print_stats_and_store_running_history_hook(step + 1, avg_train_stats, avg_val_stats)
 
-            # calculate validation statistics
-            avg_val_stats = self.validation_hook()
-
-            # Store running history
-            self.store_running_history_hook(epoch, avg_train_stats, avg_val_stats)
-
-            # Show epoch stats
-            print(f"# Epoch {epoch + 1}")
-            epoch_postfix = self.calculate_and_print_epoch_stats_hook(avg_train_stats, avg_val_stats)
-
-            # Update the total progress bar
-            total_progress_bar.set_postfix(epoch_postfix)
-
-            # Close tqdm bar
-            total_progress_bar.update(1)
+                # Clear the list
+                self.debug_ae_losses = []
+                self.debug_ucc_losses = []
+                self.debug_total_losses = []
 
             # Save model checkpoint periodically
-            need_to_save_model_checkpoint = (epoch + 1) % epoch_saver_count == 0
-            if need_to_save_model_checkpoint:
-                print(f"Going to save model {self.name} @ Epoch:{epoch + 1}")
-                self.save_model_checkpoint_hook(epoch)
+            if (step + 1) % saver_steps == 0:
+                print(f"Going to save model {self.name} @ Step:{step + 1}")
+                self.save_model_checkpoint_hook(step + 1)
 
-            print("-" * 60)
-
-        # Close the total progress bar
-        total_progress_bar.close()
+        # close the epoch progress bar
+        batch_progress_bar.close()
 
         # Return the current state
         return self.get_current_running_history_state_hook()
 
     # hooks
-    def init_params_from_checkpoint_hook(self, load_from_checkpoint, resume_epoch_num):
+    def init_params_from_checkpoint_hook(self, load_from_checkpoint, resume_steps):
         if load_from_checkpoint:
             # NOTE: resume_epoch_num can be None here if we want to load from the most recently saved checkpoint!
-            checkpoint_path = self.get_model_checkpoint_path(resume_epoch_num)
+            checkpoint_path = self.get_model_checkpoint_path(resume_steps)
             checkpoint = torch.load(checkpoint_path)
 
             # load previous state of models
@@ -202,8 +180,7 @@ class UCCTrainer:
             self.ucc_optimizer.load_state_dict(checkpoint['ucc_optimizer_state_dict'])
 
             # Things we are keeping track of
-            self.start_epoch = checkpoint['epoch']
-            self.epoch_numbers = checkpoint['epoch_numbers']
+            self.steps = checkpoint['steps']
 
             self.training_losses = checkpoint['training_losses']
             self.training_ae_losses = checkpoint['training_ae_losses']
@@ -217,13 +194,11 @@ class UCCTrainer:
 
             print(f"Model checkpoint for {self.name} is loaded from {checkpoint_path}!")
 
-    def init_scheduler_hook(self, num_epochs):
-        # here we are doing it at a bag level
+    def init_scheduler_hook(self):
         self.ucc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.ucc_optimizer,
             config.learning_rate,
-            epochs=num_epochs,
-            steps_per_epoch=len(self.train_loader)
+            total_steps=len(self.train_loader)
         )
 
     def calculate_autoencoder_loss(self, images, decoded):
@@ -235,18 +210,18 @@ class UCCTrainer:
         return ae_loss
 
     def calculate_ucc_loss_and_acc(self, ucc_logits, ucc_labels, is_train_mode=True):
+        # compute the batch stats right here and save it
+        ucc_probs = nn.Softmax(dim=1)(ucc_logits)
+        predicted = torch.argmax(ucc_probs, 1)  # class [8,6]
+        labels = ucc_labels  # class [7,6]
+        batch_correct_predictions = (predicted == labels).sum().item()  # 0.5
+        batch_size = labels.size(0)
+        batch_ucc_accuracy = batch_correct_predictions / batch_size
+
         # compute the ucc_loss between [batch, 4], [Batch,] batch size = 2
         ucc_loss = self.ucc_loss_criterion(ucc_logits, ucc_labels)
 
-        # compute the batch stats right here and save it
-        ucc_probs = nn.Softmax(dim=1)(ucc_logits)
-        predicted = torch.argmax(ucc_probs, 1) # class [8,6]
-        labels = ucc_labels # class [7,6]
-        batch_correct_predictions = (predicted == labels).sum().item() # 0.5
-        batch_size = labels.size(0)
-
         # calculate batchwise accuracy/ucc_loss
-        batch_ucc_accuracy = batch_correct_predictions / batch_size
         if is_train_mode:
             self.train_correct_predictions += batch_correct_predictions
             self.train_total_batches += batch_size
@@ -255,11 +230,10 @@ class UCCTrainer:
             self.eval_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy
 
-    def calculate_avg_train_stats_hook(self, epoch_training_loss, epoch_ae_loss, epoch_ucc_loss):
-        no_of_bags = len(self.train_loader) * config.batch_size
-        avg_training_loss_for_epoch = epoch_training_loss / no_of_bags
-        avg_ae_loss_for_epoch = epoch_ae_loss / no_of_bags
-        avg_ucc_loss_for_epoch = epoch_ucc_loss / no_of_bags
+    def calculate_avg_train_stats_hook(self):
+        avg_ae_loss_for_epoch = np.mean(np.array(self.debug_ae_losses))
+        avg_ucc_loss_for_epoch = np.mean(np.array(self.debug_ucc_losses))
+        avg_training_loss_for_epoch = np.mean(np.array(self.debug_total_losses))
         avg_ucc_training_accuracy = self.train_correct_predictions / self.train_total_batches
 
         epoch_train_stats = {
@@ -280,9 +254,9 @@ class UCCTrainer:
         self.eval_correct_predictions = 0
         self.eval_total_batches = 0
 
-        val_loss = 0.0
-        val_ae_loss = 0.0
-        val_ucc_loss = 0.0
+        val_loss = []
+        val_ae_loss = []
+        val_ucc_loss = []
 
         with torch.no_grad():
             # set all models to eval mode
@@ -297,81 +271,73 @@ class UCCTrainer:
                 # calculate losses from both models for a batch of bags
                 val_batch_ae_loss = self.calculate_autoencoder_loss(val_images, val_decoded)
                 val_batch_ucc_loss, val_batch_ucc_accuracy = self.calculate_ucc_loss_and_acc(val_ucc_logits,
-                                                                                             val_ucc_labels,
-                                                                                             False)
-
+                                                                                             val_ucc_labels, False)
                 # calculate combined loss
                 val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss
 
                 # cummulate the losses
-                val_ae_loss += val_batch_ae_loss.item()
-                val_ucc_loss += val_batch_ucc_loss.item()
-                val_loss += val_batch_loss.item()
+                val_ae_loss.append(val_batch_ae_loss.item())
+                val_ucc_loss.append(val_batch_ucc_loss.item())
+                val_loss.append(val_batch_loss.item())
 
         # Calculate average validation loss for the epoch
-        no_of_bags = len(self.val_loader) * config.batch_size
-        avg_val_loss = val_loss / no_of_bags
-        avg_val_ucc_loss = val_ucc_loss / no_of_bags
-        avg_val_ae_loss = val_ae_loss / no_of_bags
+        avg_val_loss = np.mean(np.array(val_loss))
+        avg_val_ucc_loss = np.mean(np.array(val_ucc_loss))
+        avg_val_ae_loss = np.mean(np.array(val_ae_loss))
         avg_val_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
 
-        print("Finished computing val stats, now showing a sample reconstruction")
-        # show some sample predictions
-        self.show_sample_reconstructions(self.val_loader)
-
-        return {
+        stats = {
             "avg_val_loss": avg_val_loss,
             "avg_val_ae_loss": avg_val_ae_loss,
             "avg_val_ucc_loss": avg_val_ucc_loss,
             "avg_val_ucc_training_accuracy": avg_val_ucc_training_accuracy
         }
+        print(stats)
+        print("Finished computing val stats, now showing a sample reconstruction")
+        
+        # show some sample predictions
+        self.show_sample_reconstructions(self.val_loader)
+        return stats
 
-    def calculate_and_print_epoch_stats_hook(self, avg_train_stats, avg_val_stats):
-        epoch_loss = avg_train_stats["avg_training_loss"]
-        epoch_ae_loss = avg_train_stats["avg_ae_loss"]
-        epoch_ucc_loss = avg_train_stats["avg_ucc_loss"]
-        epoch_ucc_accuracy = avg_train_stats["avg_ucc_training_accuracy"]
+    def print_stats_and_store_running_history_hook(self, curr_step, avg_train_stats, avg_val_stats):
+        loss = avg_train_stats["avg_training_loss"]
+        ae_loss = avg_train_stats["avg_ae_loss"]
+        ucc_loss = avg_train_stats["avg_ucc_loss"]
+        ucc_accuracy = avg_train_stats["avg_ucc_training_accuracy"]
 
-        epoch_val_loss = avg_val_stats["avg_val_loss"]
-        epoch_val_ae_loss = avg_val_stats["avg_val_ae_loss"]
-        epoch_val_ucc_loss = avg_val_stats["avg_val_ucc_loss"]
-        epoch_val_ucc_accuracy = avg_val_stats["avg_val_ucc_training_accuracy"]
+        val_loss = avg_val_stats["avg_val_loss"]
+        val_ae_loss = avg_val_stats["avg_val_ae_loss"]
+        val_ucc_loss = avg_val_stats["avg_val_ucc_loss"]
+        val_ucc_accuracy = avg_val_stats["avg_val_ucc_training_accuracy"]
 
+        # store running history
+        self.steps.append(curr_step)
+        self.training_losses.append(loss)
+        self.training_ae_losses.append(ae_loss)
+        self.training_ucc_losses.append(ucc_loss)
+        self.training_ucc_accuracies.append(ucc_accuracy)
+
+        self.val_losses.append(val_loss)
+        self.val_ae_losses.append(val_ae_loss)
+        self.val_ucc_losses.append(val_ucc_loss)
+        self.val_ucc_accuracies.append(val_ucc_accuracy)
+
+        # print stats
         print(
-            f"[TRAIN]: Epoch Loss: {epoch_loss} | AE Loss: {epoch_ae_loss} | UCC Loss: {epoch_ucc_loss} | UCC Acc: {epoch_ucc_accuracy}")
+            f"[TRAIN]:Step: {curr_step} | Loss: {loss} | AE Loss: {ae_loss} | UCC Loss: {ucc_loss} | UCC Acc: {ucc_accuracy}"
+        )
         print(
-            f"[VAL]: Val Loss: {epoch_val_loss} | Val AE Loss: {epoch_val_ae_loss} | Val UCC Loss: {epoch_val_ucc_loss} | Val UCC Acc: {epoch_val_ucc_accuracy}")
-
-        return {
-            "epoch_loss": epoch_loss,
-            "epoch_ae_loss": epoch_ae_loss,
-            "epoch_ucc_loss": epoch_ucc_loss,
-            "epoch_ucc_acc": epoch_ucc_accuracy,
-            "epoch_val_loss": epoch_val_loss,
-            "epoch_val_ae_loss": epoch_val_ae_loss,
-            "epoch_val_ucc_loss": epoch_val_ucc_loss,
-            "epoch_val_ucc_acc": epoch_val_ucc_accuracy
-        }
-
-    def store_running_history_hook(self, epoch, avg_train_stats, avg_val_stats):
-        self.epoch_numbers.append(epoch + 1)
-
-        self.training_ae_losses.append(avg_train_stats["avg_ae_loss"])
-        self.training_ucc_losses.append(avg_train_stats["avg_ucc_loss"])
-        self.training_losses.append(avg_train_stats["avg_training_loss"])
-        self.training_ucc_accuracies.append(avg_train_stats["avg_ucc_training_accuracy"])
-
-        self.val_ae_losses.append(avg_val_stats["avg_val_ae_loss"])
-        self.val_ucc_losses.append(avg_val_stats["avg_val_ucc_loss"])
-        self.val_losses.append(avg_val_stats["avg_val_loss"])
-        self.val_ucc_accuracies.append(avg_val_stats["avg_val_ucc_training_accuracy"])
+            f"[VAL]:Step: {curr_step} | Val Loss: {val_loss} | Val AE Loss: {val_ae_loss} | Val UCC Loss: {val_ucc_loss} | Val UCC Acc: {val_ucc_accuracy}"
+        )
+        print()
+        print("-" * 60)
 
     def get_current_running_history_state_hook(self):
-        return self.epoch_numbers, \
+        return self.steps, \
             self.training_ae_losses, self.training_ucc_losses, self.training_losses, self.training_ucc_accuracies, \
             self.val_ae_losses, self.val_ucc_losses, self.val_losses, self.val_ucc_accuracies
 
-    def save_model_checkpoint_hook(self, epoch):
+    def save_model_checkpoint_hook(self, step):
         # set it to train mode to save the weights (but doesn't matter apparently!)
         self.ucc_model.train()
 
@@ -380,13 +346,12 @@ class UCCTrainer:
         os.makedirs(model_save_directory, exist_ok=True)
 
         # Checkpoint the model at the end of each epoch
-        checkpoint_path = os.path.join(model_save_directory, f'model_epoch_{epoch + 1}.pt')
+        checkpoint_path = os.path.join(model_save_directory, f'model_step_{step + 1}.pt')
         torch.save(
             {
                 'ucc_model_state_dict': self.ucc_model.state_dict(),
                 'ucc_optimizer_state_dict': self.ucc_optimizer.state_dict(),
-                'epoch': epoch + 1,
-                'epoch_numbers': self.epoch_numbers,
+                'steps': self.steps,
                 'training_losses': self.training_losses,
                 'training_ae_losses': self.training_ae_losses,
                 'training_ucc_losses': self.training_ucc_losses,
@@ -398,16 +363,16 @@ class UCCTrainer:
             },
             checkpoint_path
         )
-        print(f"Saved the model checkpoint for experiment {self.name} for epoch {epoch + 1}")
+        print(f"Saved the model checkpoint for experiment {self.name} for step {step + 1}")
 
     def test_model(self):
         # class level init
         self.eval_correct_predictions = 0
         self.eval_total_batches = 0
 
-        test_loss = 0.0
-        test_ae_loss = 0.0
-        test_ucc_loss = 0.0
+        test_loss = []
+        test_ae_loss = []
+        test_ucc_loss = []
 
         with torch.no_grad():
             # set all models to eval mode
@@ -429,26 +394,28 @@ class UCCTrainer:
                 test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss
 
                 # cummulate the losses
-                test_ae_loss += test_batch_ae_loss.item()
-                test_ucc_loss += test_batch_ucc_loss.item()
-                test_loss += test_batch_loss.item()
+                test_ae_loss.append(test_batch_ae_loss.item())
+                test_ucc_loss.append(test_batch_ucc_loss.item())
+                test_loss.append(test_batch_loss.item())
 
         # Calculate average validation loss for the epoch
-        no_of_bags = len(self.test_loader) * config.batch_size
-        avg_test_loss = test_loss / no_of_bags
-        avg_test_ucc_loss = test_ucc_loss / no_of_bags
-        avg_test_ae_loss = test_ae_loss / no_of_bags
+        avg_test_loss = np.mean(np.array(test_loss))
+        avg_test_ucc_loss = np.mean(np.array(test_ucc_loss))
+        avg_test_ae_loss = np.mean(np.array(test_ae_loss))
         avg_test_ucc_training_accuracy = self.eval_correct_predictions / self.eval_total_batches
 
-        # show some sample predictions
-        self.show_sample_reconstructions(self.test_loader)
-
-        return {
+        stats = {
             "avg_test_loss": avg_test_loss,
             "avg_test_ae_loss": avg_test_ae_loss,
             "avg_test_ucc_loss": avg_test_ucc_loss,
             "avg_test_ucc_training_accuracy": avg_test_ucc_training_accuracy
         }
+        print(stats)
+
+        print("Now going to show a sample reconstruction")
+        # show some sample predictions
+        self.show_sample_reconstructions(self.test_loader)
+        return stats
 
     def show_sample_reconstructions(self, dataloader):
         # Create a subplot grid
@@ -496,137 +463,10 @@ class UCCTrainer:
         plt.tight_layout()
         plt.show()
 
-    def js_divergence(self, p, q):
-        """
-        Calculate the Jensen-Shannon Divergence between two probability distributions p and q.
-
-        Args:
-        p (torch.Tensor): Probability distribution p.
-        q (torch.Tensor): Probability distribution q.
-
-        Returns:
-        torch.Tensor: Jensen-Shannon Divergence between p and q.
-        """
-        # Calculate the average distribution 'm'
-        m = 0.5 * (p + q)
-
-        # Calculate the KL Divergence of 'p' and 'q' from 'm'
-        kl_div_p = F.kl_div(p.log(), m, reduction='batchmean')
-        kl_div_q = F.kl_div(q.log(), m, reduction='batchmean')
-
-        # Compute the JS Divergence
-        js_divergence = 0.5 * (kl_div_p + kl_div_q)
-
-        return js_divergence
-
-    def calculate_min_js_divergence(self):
-        num_classes = len(self.kde_loaders)
-        kde_per_class = {class_idx: 0.0 for class_idx in range(num_classes)}
-
-        # find the average kde across all classes
-        for class_idx, pure_class_kde_loader in enumerate(self.kde_loaders):
-            print(f"Kde Loader {class_idx} started!")
-            num_bags_in_class = 0
-            for images in tqdm(pure_class_kde_loader):
-                # get the first element
-                images = images[0]
-
-                # Stage.1 pass through the encoder to get the latent features
-                # batch data is of shape ( Batch,bag, 3,32,32)
-                batch_size, bag_size, num_channels, height, width = images.size()
-                # reshaping to shape ( batch * bag, 3 ,32,32)
-                batches_of_bag_images = images.view(batch_size * bag_size, num_channels, height, width).to(
-                    torch.float32)
-                latent_features = self.ucc_model.autoencoder.encoder(batches_of_bag_images)  # shape (Batch * bag, 48*16)
-                latent_features = latent_features.to(torch.float32)  # shape (Batch * Bag, 256, 2, 2)
-
-                # Stage.2 pass through KDE
-                # encoded is of shape [Batch * Bag, 256,2,2] ->  make it into shape [Batch, Bag, 256*2*2]
-                latent_features = latent_features.view(batch_size, bag_size, latent_features.size(1) * latent_features.size(2) * latent_features.size(3))
-
-                batch_kde_distributions = self.ucc_model.ucc_predictor.kde(latent_features)  # shape [Batch, 1024*11]
-
-                # Stage.3 Take sum
-                num_bags_in_class += batch_kde_distributions.size(0)
-                kde_distributions = torch.sum(batch_kde_distributions, dim=0)
-                kde_per_class[class_idx] += kde_distributions
-
-            # Stage.4 Take average
-            kde_per_class[class_idx] /= num_bags_in_class
-            print(f"Kde Loader {class_idx} done!")
-
-        print("Computed all the kde's! Now finding min js divergence..")
-
-        # find the js_divergence
-        min_divergence = torch.inf
-        best_i = None
-        best_j = None
-        for i in range(num_classes):
-            for j in range(i + 1, num_classes):
-                divergence = self.js_divergence(kde_per_class[i], kde_per_class[j])
-                print(f"JS Divergence between {i} & {j} is {divergence}")
-                if divergence < min_divergence:
-                    min_divergence = divergence
-                    best_i = i
-                    best_j = j
-
-        print(f"Min JS Divergence is {min_divergence} between classes {best_i} & {best_j}")
-        # return the min divergence
-        return min_divergence
-
-    def calculate_clustering_accuracy(self):
-        all_latent_features = []
-        truth_labels_arr = []
-        print(f"No of autoencoder loaders are {len(self.autoencoder_loaders)}")
-        for autoencoder_idx, pure_autoencoder_loader in enumerate(self.autoencoder_loaders):
-            print(f"Started pure autoencoder loader {autoencoder_idx} of length {len(pure_autoencoder_loader)}")
-            for data in tqdm(pure_autoencoder_loader):
-                # batch data is of shape (1,3,32,32), (1,1)
-                image, label = data
-                latent_features = self.ucc_model.autoencoder.encoder(image)  # shape (1, 256,2,2)
-                latent_features = latent_features.view(-1)  # flatten
-
-                latent_features = latent_features.squeeze().detach().cpu().numpy()  # ndarray shape (1024)
-                label = label.squeeze().detach().cpu().numpy()  # ndarray shape (1)
-
-                all_latent_features.append(latent_features)
-                truth_labels_arr.append(label.item())
-
-        all_latent_features = np.array(all_latent_features)
-        truth_labels_arr = np.array(truth_labels_arr)
-        print("Got the latent features for all test images, now doing Kmeans")
-
-        # Do kmeans fit
-        estimator = KMeans(n_clusters=10, init='k-means++', n_init=10)
-        estimator.fit(all_latent_features)
-        predicted_clustering_labels = estimator.labels_
-
-        print("Got the kmeans predicted labels, now computing clustering accuracy")
-
-        # Calculate accuracy
-        cost_matrix = np.zeros((10, 10))
-        num_samples = np.zeros(10)
-        for truth_val in range(10):
-            temp_sample_indices = np.where(truth_labels_arr == truth_val)[0]
-            num_samples[truth_val] = temp_sample_indices.shape[0]
-
-            temp_predicted_labels = predicted_clustering_labels[temp_sample_indices]
-
-            for predicted_val in range(10):
-                temp_matching_pairs = np.where(temp_predicted_labels == predicted_val)[0]
-                cost_matrix[truth_val, predicted_val] = 1 - (
-                        temp_matching_pairs.shape[0] / temp_sample_indices.shape[0])
-
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-        cost = cost_matrix[row_ind, col_ind]
-
-        clustering_acc = ((1 - cost) * num_samples).sum() / num_samples.sum()
-        return clustering_acc
-
     # find the most recent file and return the path
-    def get_model_checkpoint_path(self, epoch_num=None):
+    def get_model_checkpoint_path(self, step_num=None):
         directory = os.path.join(self.save_dir, self.name)
-        if epoch_num == None:
+        if step_num == None:
             # Get a list of all files in the directory
             files = os.listdir(directory)
 
@@ -639,5 +479,5 @@ class UCCTrainer:
             # Get the name of the most recently added file
             model_file = files[0] if files else None
         else:
-            model_file = f"model_epoch_{epoch_num}.pt"
+            model_file = f"model_step_{step_num}.pt"
         return os.path.join(directory, model_file)
