@@ -28,7 +28,7 @@ class Config:
 
     # train_steps = 100000
     train_steps = 100 # for local testing
-    test_steps = 1000
+    test_steps = 100
     val_steps = 10
     # val_steps = 100
     # debug_steps = 1000

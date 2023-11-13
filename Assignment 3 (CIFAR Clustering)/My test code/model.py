@@ -146,14 +146,20 @@ class ResidualAutoencoder(nn.Module):
         self.encoder = nn.Sequential(
             nn.Conv2d(
                 3,
-                16,
+                8,
                 kernel_size=3,
                 padding=1,
             ),
             WideResidualBlocks(
+                8,
+                16,
+                1
+            ),
+            WideResidualBlocks(
                 16,
                 32,
-                1
+                1,
+                down_sample=True
             ),
             WideResidualBlocks(
                 32,
@@ -166,30 +172,35 @@ class ResidualAutoencoder(nn.Module):
                 128,
                 1,
                 down_sample=True,
-            ),  # [b,128,8,8]
+            ),  # [b,128,4,4]
             WideResidualBlocks(
                 128,
                 256,
                 1,
                 down_sample=True,
-            ),  # [b,256,4,4] -> 4096
+            ),  # [b,256,2,2] -> 1024
             WideResidualBlocks(
                 256,
-                256,
+                512,
                 1,
                 down_sample=True,
-            ),  # [b,256,2,2] -> 1024
+            ),  # [b,512,1,1] -> 512
+            nn.Sigmoid()
         )
 
         self.feature_extractor = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(1024, 128),
+            nn.Linear(512, 679),
+            nn.LeakyReLU(),
+            nn.Linear(679, 128),
+            nn.LeakyReLU(),
+            nn.Linear(128, 10), #Input to kde is just 10
             nn.Sigmoid()
         )
 
         self.decoder = nn.Sequential(
             WideResidualBlocks(
-                256,
+                512,
                 256,
                 1,
                 up_sample=True,
@@ -211,9 +222,20 @@ class ResidualAutoencoder(nn.Module):
                 32,
                 1,
                 up_sample=True,
+            ),
+            WideResidualBlocks(
+                32,
+                16,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                16,
+                8,
+                1
             ),
             nn.Conv2d(
-                32,
+                8,
                 3,
                 kernel_size=3,
                 padding=1,
@@ -280,16 +302,16 @@ class UCCModel(nn.Module):
 
         self.kde = KDE(device)
         self.ucc_predictor = nn.Sequential(
-            nn.Linear(128*11, 256),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(256, 32, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(32, ucc_limit, dtype=torch.float32)
+            nn.Linear(110, 384),
+            nn.LeakyReLU(),
+            nn.Linear(384, 192, dtype=torch.float32),
+            nn.LeakyReLU(),
+            nn.Linear(192, 64, dtype=torch.float32),
+            nn.LeakyReLU(),
+            nn.Linear(64, ucc_limit, dtype=torch.float32)
         )
 
-        print(" UCC model initialized")
+        print("UCC model initialized")
 
     def forward(self, batch):
         # Input size: [batch, bag, 3, 32, 32]
@@ -322,7 +344,7 @@ class UCCModel(nn.Module):
         )  # we are feeding in Batch*bag images of shape (3,32,32)
         return features
 
-    def get_kde_output(self, batch):
+    def get_kde_distributions(self, batch):
         batch_size, bag_size, num_channels, height, width = batch.size()
         batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
         features, _ = self.autoencoder(
@@ -346,16 +368,16 @@ class RCCModel(nn.Module):
         self.kde = KDE(device)
 
         self.shared_predictor_stack =  nn.Sequential(
-            nn.Linear(128 * 11, 256),
-            nn.Dropout(0.1),
-            nn.ReLU(),
-            nn.Linear(256, 32, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.ReLU()
+            nn.Linear(110, 384),
+            nn.LeakyReLU(),
+            nn.Linear(384, 192, dtype=torch.float32),
+            nn.LeakyReLU(),
+            nn.Linear(192, 64, dtype=torch.float32),
+            nn.LeakyReLU(),
         )
 
-        self.ucc_predictor = nn.Linear(32, ucc_limit, dtype=torch.float32)
-        self.rcc_predictor = nn.Linear(32, rcc_limit, dtype=torch.float32)
+        self.ucc_predictor = nn.Linear(64, ucc_limit, dtype=torch.float32)
+        self.rcc_predictor = nn.Linear(64, rcc_limit, dtype=torch.float32)
 
         print(" UCC model initialized")
 
@@ -396,7 +418,7 @@ class RCCModel(nn.Module):
         )  # we are feeding in Batch*bag images of shape (3,32,32)
         return features
 
-    def get_kde_output(self, batch):
+    def get_kde_distributions(self, batch):
         batch_size, bag_size, num_channels, height, width = batch.size()
         batches_of_image_bags = batch.view(batch_size * bag_size, num_channels, height, width).to(torch.float32)
         features, _ = self.autoencoder(
@@ -415,12 +437,12 @@ if __name__ == '__main__':
     # autoencoder = ResidualAutoencoder().to(device)
     # summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
-    #  UCC model
-    # ucc = UCCModel(device).to(device)
-    # summary(ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
-    #         verbose=1)
+    # UCC model
+    ucc = UCCModel(device).to(device)
+    summary(ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+            verbose=1)
 
-    # #  RCC model
-    # rcc = RCCModel(device).to(device)
-    # summary(rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
-    #         verbose=1)
+    #  RCC model
+    rcc = RCCModel(device).to(device)
+    summary(rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+            verbose=1)

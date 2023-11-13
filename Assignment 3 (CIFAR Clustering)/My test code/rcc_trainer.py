@@ -335,7 +335,7 @@ class RCCTrainer:
                                                                                              False)
 
                 # calculate combined loss
-                val_batch_loss = val_batch_ae_loss + val_batch_ucc_loss + val_batch_rcc_loss
+                val_batch_loss = (self.ae_importance * val_batch_ae_loss) + (self.ucc_importance * val_batch_ucc_loss) + (self.rcc_importance * val_batch_rcc_loss)
 
                 # cummulate the losses
                 val_loss.append(val_batch_loss.item())
@@ -478,7 +478,7 @@ class RCCTrainer:
                                                                                                False)
 
                 # calculate combined loss
-                test_batch_loss = test_batch_ae_loss + test_batch_ucc_loss + test_batch_rcc_loss
+                test_batch_loss = (self.ae_importance * test_batch_ae_loss) + (self.ucc_importance * test_batch_ucc_loss) + (self.rcc_importance * test_batch_rcc_loss)
 
                 # cummulate the losses
                 test_loss.append(test_batch_loss.item())
@@ -574,3 +574,117 @@ class RCCTrainer:
             model_file = f"model_step_{step_num}.pt"
         return os.path.join(directory, model_file)
 
+    # Calculate min JS Divergence
+    def calculate_js_divergence(self, p, q):
+        m = 0.5 * (p + q)
+        log_p_over_m = np.log2(p / m)
+        log_q_over_m = np.log2(q / m)
+        return 0.5 * np.sum(p * log_p_over_m) + 0.5 * np.sum(q * log_q_over_m)
+
+    def get_all_kde_distributions(self):
+        self.rcc_model.eval()
+
+        kde_distributions = []
+        all_labels = []
+        with torch.no_grad():
+            for imgs, labels in tqdm(self.cifar_test_loader):
+                imgs = imgs.unsqueeze(1).to(config.device)
+                kde_dist = self.rcc_model.get_kde_distributions(imgs)
+                kde_distributions.append(kde_dist.cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+
+        kde_distributions = np.concatenate(kde_distributions)
+        all_labels = np.concatenate(all_labels)
+        return kde_distributions, all_labels
+
+    def compute_min_js_divergence(self):
+        kde_distributions, all_labels = self.get_all_kde_distributions()
+        print("Got the KDE distributions for the test dataset")
+
+        # iterate for each class and get only those embeddings
+        distribution_of_all_label_classes = []
+        for i in range(config.num_classes):
+            idxs = np.where(all_labels == i)
+            kde_distribution_i = kde_distributions[idxs]
+            kde_distribution_i = np.mean(kde_distribution_i, axis=0)
+            distribution_of_all_label_classes.append(kde_distribution_i)
+        distribution_of_all_label_classes = np.array(distribution_of_all_label_classes)
+        print("Got the average kde distribution per label class, now computing min js divergence")
+
+        res = np.zeros((config.num_classes, config.num_classes))
+        for i in range(config.num_classes):
+            p = np.clip(distribution_of_all_label_classes[i, :], 1e-12, 1)
+            # p = distribution_of_all_label_classes[i, :]
+            for j in range(i, config.num_classes):
+                q = np.clip(distribution_of_all_label_classes[j, :], 1e-12, 1)
+                # q = distribution_of_all_label_classes[j, :]
+
+                # fill the upper triangle
+                res[i, j] = self.calculate_js_divergence(p, q)
+
+                # fill the lower triangle
+                res[j, i] = res[i, j]
+
+        # we are not interested in the identity relation anyway
+        np.fill_diagonal(res, np.inf)
+        print("Computed all interclass js divergence scores, the entire interclass js divergence is ")
+        print(res)
+        # Find the minimum value
+        min_js_divergence = np.min(res)
+
+        # Find the indices of the minimum value
+        min_indices = np.argmin(res)
+        min_row, min_col = np.unravel_index(min_indices, res.shape)
+
+        print(f"Min JS Divergence is {min_js_divergence}, between classes {min_row} & {min_col}")
+        return min_js_divergence
+
+
+    # Calculate clustering accuracy
+    def get_all_encoder_features(self):
+        self.rcc_model.eval()
+
+        all_features = []
+        all_labels = []
+        with torch.no_grad():
+            for imgs, labels in tqdm(self.cifar_test_loader):
+                imgs = imgs.unsqueeze(1).to(config.device)
+                features = self.rcc_model.get_encoder_features(imgs)
+                all_features.append(features.cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+
+        all_features = np.concatenate(all_features)
+        all_labels = np.concatenate(all_labels)
+        return all_features, all_labels
+
+    def perform_clustering_and_get_cluster_labels(self, features):
+        model = KMeans(n_clusters=10, init='k-means++', n_init=10)
+        model.fit(features)
+        return model.labels_
+
+    def compute_clustering_accuracy(self):
+        all_features, all_labels = self.get_all_encoder_features()
+        print("Computed all the features from the encoder")
+        cluster_labels = self.perform_clustering_and_get_cluster_labels(all_features)
+        print("Performed clustering and computed all the cluster labels")
+
+        cost_matrix = np.zeros((config.num_classes, config.num_classes))
+        num_samples = np.zeros(config.num_classes)
+
+        for true_label in range(config.num_classes):
+            true_label_idxs = np.where(all_labels == true_label)[0]
+            num_samples[true_label] = true_label_idxs.shape[0]
+
+            sample_preds = cluster_labels[true_label_idxs]
+
+            for pred_label in range(config.num_classes):
+                pairs = np.where(sample_preds == pred_label)[0]
+
+                cost_matrix[true_label, pred_label] = 1 - (pairs.shape[0] / true_label_idxs.shape[0])
+
+        print("Going to perform linear sum assignment of cost matrix")
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        cost = cost_matrix[row_ind, col_ind]
+        clustering_acc = ((1 - cost) * num_samples).sum() / num_samples.sum()
+        print(f"Clustering accuracy is {clustering_acc}")
+        return clustering_acc
