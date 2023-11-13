@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
+from torchvision import models
 from torchinfo import summary
 import numpy as np
+from torchvision.models import ViT_B_16_Weights
+import torchvision.transforms as transforms
+
 from params import *
 import torch.nn.functional as F
 
@@ -90,6 +94,93 @@ class Reshape(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), *self.target_shape)
 
+class ViTAutoencoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.vit_pretrained_model = models.vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1).to(config.device)
+        self.vit_encoder = nn.Sequential(*list(self.vit_pretrained_model.children())[:-1])[1].to(config.device)
+        self.encoder = nn.Sequential(
+            nn.Linear(768, 256),
+            nn.LeakyReLU(),
+            nn.Linear(256, 10)
+        ).to(config.device)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(10, 512),
+            Reshape(*[512, 1, 1]),
+            WideResidualBlocks(
+                512,
+                256,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                256,
+                128,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                128,
+                64,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                64,
+                32,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                32,
+                16,
+                1,
+                up_sample=True,
+            ),
+            WideResidualBlocks(
+                16,
+                8,
+                1
+            ),
+            nn.Conv2d(
+                8,
+                3,
+                kernel_size=3,
+                padding=1,
+            )
+        ).to(config.device)
+
+        # Freeze all the parameters
+        for param in self.vit_pretrained_model.parameters():
+            param.requires_grad = False
+
+        # Freeze all the parameters
+        for param in self.vit_encoder.parameters():
+            param.requires_grad = False
+
+    def get_vit_encoder_features(self, x):
+        # necessary to resize for ViT to work
+        x = transforms.Resize((224, 224))(x)
+        x = self.vit_pretrained_model._process_input(x)
+        n = x.shape[0]
+
+        # Expand the class token to the full batch
+        batch_class_token = self.vit_pretrained_model.class_token.expand(n, -1, -1)
+        x = torch.cat([batch_class_token, x], dim=1)
+        x = self.vit_encoder(x).to(config.device)
+
+        # Classifier "token" as used by standard language architectures
+        x = x[:, 0]
+        return x
+
+    def forward(self, x):
+        vit_encoder_features = self.get_vit_encoder_features(x)
+        features = self.encoder(vit_encoder_features).to(config.device)
+        reconstruction = self.decoder(features)
+        return features, reconstruction
+
+
 
 class ResidualAutoencoder(nn.Module):
     def __init__(self):
@@ -125,7 +216,7 @@ class ResidualAutoencoder(nn.Module):
         print("Autoencoder initialized")
 
     def forward(self, x):
-        #encoder
+        # encoder
         e1 = self.leaky(self.encoder1_3_8(x))
         e2 = self.leaky(self.encoder2_8_16(e1))
         e3 = self.leaky(self.encoder3_16_32(e2))
@@ -137,7 +228,7 @@ class ResidualAutoencoder(nn.Module):
         e9 = self.leaky(self.encoder9_512_700(e8))
         features = self.sigmoid(self.encoder10_700_10(e9))
 
-        #decoder (making u net like connections for learning better features and ensuring a good reconstruction)
+        # decoder (making u net like connections for learning better features and ensuring a good reconstruction)
         d9 = self.leaky(self.decoder9_512(features) + e8)
         d8 = self.leaky(self.decoder8_reshape(d9) + e7)
         d7 = self.leaky(self.decoder7_512_256(d8) + e6)
@@ -148,8 +239,9 @@ class ResidualAutoencoder(nn.Module):
         d2 = self.leaky(self.decoder2_16_8(d3) + e1)
         reconstruction = self.sigmoid(self.decoder1_8_3(d2))
 
-        #return features and reconstructed images
+        # return features and reconstructed images
         return features, reconstruction
+
 
 
 # KDE layer
@@ -200,7 +292,7 @@ class UCCModel(nn.Module):
         if autoencoder_model:
             self.autoencoder = autoencoder_model
         else:
-            self.autoencoder = ResidualAutoencoder()
+            self.autoencoder = ViTAutoencoder()
 
         self.kde = KDE(device)
         self.ucc_predictor = nn.Sequential(
@@ -265,7 +357,7 @@ class RCCModel(nn.Module):
         if autoencoder_model:
             self.autoencoder = autoencoder_model
         else:
-            self.autoencoder = ResidualAutoencoder()
+            self.autoencoder = ViTAutoencoder()
 
         self.kde = KDE(device)
 
@@ -340,11 +432,15 @@ if __name__ == '__main__':
     # summary(autoencoder, input_size=(3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
 
     # UCC model
-    # ucc = UCCModel(device).to(device)
-    # summary(ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
-    #         verbose=1)
+    ucc = UCCModel(device).to(device)
+    summary(ucc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
+            verbose=1)
 
     # #  RCC model
     # rcc = RCCModel(device).to(device)
     # summary(rcc, input_size=(config.bag_size, 3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"],
     #         verbose=1)
+
+    # VIT model
+    # vit = ViTAutoencoder().to(device)
+    # summary(vit, input_size=(3, 32, 32), device=device, batch_dim=0, col_names=["input_size", "output_size", "num_params", "kernel_size", "mult_adds"], verbose=1)
