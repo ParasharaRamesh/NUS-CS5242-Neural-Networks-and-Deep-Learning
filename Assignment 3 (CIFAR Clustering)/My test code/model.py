@@ -3,7 +3,7 @@ import torch.nn as nn
 from torchvision import models
 from torchinfo import summary
 import numpy as np
-from torchvision.models import ViT_B_16_Weights
+from torchvision.models import EfficientNet_V2_S_Weights
 import torchvision.transforms as transforms
 
 from params import *
@@ -94,15 +94,20 @@ class Reshape(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), *self.target_shape)
 
-class ViTAutoencoder(nn.Module):
+class PretrainedAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
-        self.vit_pretrained_model = models.vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1).to(config.device)
-        self.vit_encoder = nn.Sequential(*list(self.vit_pretrained_model.children())[:-1])[1].to(config.device)
+        pretrained_model = models.efficientnet_v2_s(weights=EfficientNet_V2_S_Weights.IMAGENET1K_V1).to(config.device)
+        self.pretrained_encoder = nn.Sequential(*list(pretrained_model.children())[:-1]).to(config.device)
         self.encoder = nn.Sequential(
-            nn.Linear(768, 256),
+            nn.Flatten(),
+            nn.Linear(1280, 512),
+            nn.Dropout(0.1),
             nn.LeakyReLU(),
-            nn.Linear(256, 10)
+            nn.Linear(512, 128),
+            nn.Dropout(0.1),
+            nn.LeakyReLU(),
+            nn.Linear(128, 10)
         ).to(config.device)
 
         self.decoder = nn.Sequential(
@@ -152,31 +157,12 @@ class ViTAutoencoder(nn.Module):
         ).to(config.device)
 
         # Freeze all the parameters
-        for param in self.vit_pretrained_model.parameters():
+        for param in self.pretrained_encoder.parameters():
             param.requires_grad = False
-
-        # Freeze all the parameters
-        for param in self.vit_encoder.parameters():
-            param.requires_grad = False
-
-    def get_vit_encoder_features(self, x):
-        # necessary to resize for ViT to work
-        x = transforms.Resize((224, 224))(x)
-        x = self.vit_pretrained_model._process_input(x)
-        n = x.shape[0]
-
-        # Expand the class token to the full batch
-        batch_class_token = self.vit_pretrained_model.class_token.expand(n, -1, -1)
-        x = torch.cat([batch_class_token, x], dim=1)
-        x = self.vit_encoder(x).to(config.device)
-
-        # Classifier "token" as used by standard language architectures
-        x = x[:, 0]
-        return x
 
     def forward(self, x):
-        vit_encoder_features = self.get_vit_encoder_features(x)
-        features = self.encoder(vit_encoder_features).to(config.device)
+        pretrained_features = self.pretrained_encoder(x)
+        features = self.encoder(pretrained_features).to(config.device)
         reconstruction = self.decoder(features)
         return features, reconstruction
 
@@ -292,7 +278,7 @@ class UCCModel(nn.Module):
         if autoencoder_model:
             self.autoencoder = autoencoder_model
         else:
-            self.autoencoder = ViTAutoencoder()
+            self.autoencoder = PretrainedAutoencoder()
 
         self.kde = KDE(device)
         self.ucc_predictor = nn.Sequential(
@@ -357,7 +343,7 @@ class RCCModel(nn.Module):
         if autoencoder_model:
             self.autoencoder = autoencoder_model
         else:
-            self.autoencoder = ViTAutoencoder()
+            self.autoencoder = PretrainedAutoencoder()
 
         self.kde = KDE(device)
 
