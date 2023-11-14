@@ -82,7 +82,7 @@ class RCCTrainer:
     def train(self,
               resume_steps=None,
               load_from_checkpoint=False,
-              saver_steps=100):
+              saver_steps=config.saver_steps):
         torch.cuda.empty_cache()
 
         # initialize the params from the saved checkpoint
