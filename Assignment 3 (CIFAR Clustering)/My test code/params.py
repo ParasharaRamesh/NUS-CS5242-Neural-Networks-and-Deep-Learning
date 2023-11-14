@@ -16,8 +16,8 @@ class Config:
     num_nodes = 11
 
     learning_rate = 1e-4
-    weight_decay = 1e-4
-    grad_clip = 0.7
+    weight_decay = 1e-5
+    grad_clip = 1.3
 
     batch_size = 20
     # batch_size = 2

@@ -163,6 +163,10 @@ class UCCTrainer:
         # close the epoch progress bar
         batch_progress_bar.close()
 
+        #save final model
+        print(f"Going to save final model {self.name} @ Step: {step + 1}")
+        self.save_model_checkpoint_hook(step + 1)
+
         # Return the current state
         return self.get_current_running_history_state_hook()
 

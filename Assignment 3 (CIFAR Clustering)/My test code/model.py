@@ -3,7 +3,7 @@ import torch.nn as nn
 from torchvision import models
 from torchinfo import summary
 import numpy as np
-from torchvision.models import EfficientNet_V2_S_Weights
+from torchvision.models import ResNeXt50_32X4D_Weights
 import torchvision.transforms as transforms
 
 from params import *
@@ -63,7 +63,6 @@ class ResidualZeroPaddingBlock(nn.Module):
             out = nn.LeakyReLU()(self.conv2(out))
         return x + out
 
-
 class WideResidualBlocks(nn.Module):
     def __init__(
             self, in_channels, out_channels, n, down_sample=False, up_sample=False
@@ -85,7 +84,6 @@ class WideResidualBlocks(nn.Module):
     def forward(self, x):
         return self.blocks(x)
 
-
 class Reshape(nn.Module):
     def __init__(self, *target_shape):
         super(Reshape, self).__init__()
@@ -97,68 +95,74 @@ class Reshape(nn.Module):
 class PretrainedAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
-        pretrained_model = models.efficientnet_v2_s(weights=EfficientNet_V2_S_Weights.IMAGENET1K_V1).to(config.device)
+        pretrained_model = models.resnext50_32x4d(weights=ResNeXt50_32X4D_Weights.IMAGENET1K_V1).to(config.device)
         self.pretrained_encoder = nn.Sequential(*list(pretrained_model.children())[:-1]).to(config.device)
         self.encoder = nn.Sequential(
+            nn.BatchNorm2d(2048),
             nn.Flatten(),
-            nn.Linear(1280, 512),
-            nn.Dropout(0.1),
+            nn.Linear(2048, 128),
+            nn.Dropout(0.13),
             nn.LeakyReLU(),
-            nn.Linear(512, 128),
-            nn.Dropout(0.1),
-            nn.LeakyReLU(),
-            nn.Linear(128, 10)
+            nn.Linear(128, 32),
+            nn.Sigmoid()
         ).to(config.device)
 
         self.decoder = nn.Sequential(
-            nn.Linear(10, 512),
-            Reshape(*[512, 1, 1]),
+            nn.Linear(32, 128),
+            Reshape(*[128, 1, 1]),
             WideResidualBlocks(
-                512,
+                128,
                 256,
                 1,
                 up_sample=True,
             ),
+            nn.BatchNorm2d(256),
             WideResidualBlocks(
                 256,
                 128,
                 1,
                 up_sample=True,
             ),
+            nn.BatchNorm2d(128),
             WideResidualBlocks(
                 128,
                 64,
                 1,
                 up_sample=True,
             ),
+            nn.BatchNorm2d(64),
             WideResidualBlocks(
                 64,
                 32,
                 1,
                 up_sample=True,
             ),
+            nn.BatchNorm2d(32),
             WideResidualBlocks(
                 32,
                 16,
                 1,
                 up_sample=True,
             ),
+            nn.BatchNorm2d(16),
             WideResidualBlocks(
                 16,
                 8,
                 1
             ),
+            nn.BatchNorm2d(8),
             nn.Conv2d(
                 8,
                 3,
                 kernel_size=3,
                 padding=1,
-            )
+            ),
+            nn.Sigmoid()
         ).to(config.device)
 
-        # Freeze all the parameters
-        for param in self.pretrained_encoder.parameters():
-            param.requires_grad = False
+        ## Freeze all the parameters
+        # for param in self.pretrained_encoder.parameters():
+        #     param.requires_grad = False
 
     def forward(self, x):
         pretrained_features = self.pretrained_encoder(x)
@@ -282,13 +286,10 @@ class UCCModel(nn.Module):
 
         self.kde = KDE(device)
         self.ucc_predictor = nn.Sequential(
-            nn.Linear(110, 256),
-            nn.Dropout(0.1),
+            nn.Linear(352, 32),
+            nn.Dropout(0.13),
             nn.LeakyReLU(),
-            nn.Linear(256, 64, dtype=torch.float32),
-            nn.Dropout(0.1),
-            nn.LeakyReLU(),
-            nn.Linear(64, ucc_limit, dtype=torch.float32)
+            nn.Linear(32, ucc_limit)
         )
 
         print("UCC model initialized")
@@ -348,18 +349,15 @@ class RCCModel(nn.Module):
         self.kde = KDE(device)
 
         self.shared_predictor_stack = nn.Sequential(
-            nn.Linear(110, 256),
-            nn.Dropout(0.1),
-            nn.LeakyReLU(),
-            nn.Linear(256, 64, dtype=torch.float32),
-            nn.Dropout(0.1),
+            nn.Linear(352, 32),
+            nn.Dropout(0.17),
             nn.LeakyReLU()
         )
 
-        self.ucc_predictor = nn.Linear(64, ucc_limit, dtype=torch.float32)
-        self.rcc_predictor = nn.Linear(64, rcc_limit, dtype=torch.float32)
+        self.ucc_predictor = nn.Linear(32, ucc_limit)
+        self.rcc_predictor = nn.Linear(32, rcc_limit)
 
-        print(" UCC model initialized")
+        print("RCC model initialized")
 
     def forward(self, batch):
         # Input size: [batch, bag, 3, 32, 32]
