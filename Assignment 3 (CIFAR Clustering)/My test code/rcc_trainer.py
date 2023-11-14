@@ -214,7 +214,7 @@ class RCCTrainer:
 
             print(f"Model checkpoint for {self.name} is loaded from {checkpoint_path}!")
 
-    def init_scheduler_hook(self, num_epochs):
+    def init_scheduler_hook(self):
         self.rcc_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.rcc_optimizer,
             config.learning_rate,
@@ -243,11 +243,11 @@ class RCCTrainer:
 
         # calculate batchwise accuracy/ucc_loss
         if is_train_mode:
-            self.train_correct_predictions += batch_correct_predictions
-            self.train_total_batches += batch_size
+            self.train_ucc_correct_predictions += batch_correct_predictions
+            self.train_ucc_total_batches += batch_size
         else:
-            self.eval_correct_predictions += batch_correct_predictions
-            self.eval_total_batches += batch_size
+            self.eval_ucc_correct_predictions += batch_correct_predictions
+            self.eval_ucc_total_batches += batch_size
         return ucc_loss, batch_ucc_accuracy
 
     '''

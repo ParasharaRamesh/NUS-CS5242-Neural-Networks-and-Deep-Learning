@@ -100,7 +100,7 @@ class PretrainedAutoencoder(nn.Module):
         self.encoder = nn.Sequential(
             nn.BatchNorm2d(2048),
             nn.Flatten(),
-            nn.Linear(2048, 128),
+            nn.Linear(2048, 128, bias=False),
             nn.Dropout(0.13),
             nn.LeakyReLU(),
             nn.Linear(128, 32),
@@ -170,8 +170,6 @@ class PretrainedAutoencoder(nn.Module):
         reconstruction = self.decoder(features)
         return features, reconstruction
 
-
-
 class ResidualAutoencoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -231,8 +229,6 @@ class ResidualAutoencoder(nn.Module):
 
         # return features and reconstructed images
         return features, reconstruction
-
-
 
 # KDE layer
 class KDE(nn.Module):
@@ -349,8 +345,8 @@ class RCCModel(nn.Module):
         self.kde = KDE(device)
 
         self.shared_predictor_stack = nn.Sequential(
-            nn.Linear(352, 32),
-            nn.Dropout(0.17),
+            nn.Linear(352, 32, bias=False),
+            nn.Dropout(0.13),
             nn.LeakyReLU()
         )
 
