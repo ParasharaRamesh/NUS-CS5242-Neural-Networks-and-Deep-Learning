@@ -482,6 +482,8 @@ class UCCTrainer:
 
     # Calculate min JS Divergence
     def calculate_js_divergence(self, p, q):
+        p = p/np.sum(p)
+        q = q/np.sum(q)
         m = 0.5 * (p + q)
         log_p_over_m = np.log2(p / m)
         log_q_over_m = np.log2(q / m)

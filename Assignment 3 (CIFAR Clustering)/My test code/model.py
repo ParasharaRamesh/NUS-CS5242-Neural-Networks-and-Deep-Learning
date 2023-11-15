@@ -9,7 +9,7 @@ import torchvision.transforms as transforms
 from params import *
 import torch.nn.functional as F
 
-
+'''old
 class ResidualZeroPaddingBlock(nn.Module):
     def __init__(
             self,
@@ -229,6 +229,164 @@ class ResidualAutoencoder(nn.Module):
 
         # return features and reconstructed images
         return features, reconstruction
+'''
+
+class ResidualZeroPaddingBlock(nn.Module):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            first_block=False,
+            down_sample=False,
+            up_sample=False,
+    ):
+        super(ResidualZeroPaddingBlock, self).__init__()
+        self.first_block = first_block
+        self.down_sample = down_sample
+        self.up_sample = up_sample
+
+        if self.up_sample:
+            self.upsampling = nn.Upsample(scale_factor=2, mode="nearest")
+
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            stride=2 if self.down_sample else 1,
+        )
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.skip_conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=1,
+            stride=2 if self.down_sample else 1,
+        )
+
+        # Initialize the weights and biases
+        nn.init.xavier_uniform_(self.conv1.weight)
+        nn.init.constant_(self.conv1.bias, 0.1)
+        nn.init.xavier_uniform_(self.conv2.weight)
+        nn.init.constant_(self.conv2.bias, 0.1)
+        nn.init.xavier_uniform_(self.skip_conv.weight)
+
+    def forward(self, x):
+        if self.first_block:
+            x = nn.LeakyReLU()(x)
+            if self.up_sample:
+                x = self.upsampling(x)
+            out = nn.LeakyReLU()(self.conv1(x))
+            out = self.conv2(out)
+            if x.shape != out.shape:
+                x = self.skip_conv(x)
+        else:
+            out = nn.LeakyReLU()(self.conv1(x))
+            out = nn.LeakyReLU()(self.conv2(out))
+        return x + out
+
+class WideResidualBlocks(nn.Module):
+    def __init__(
+            self, in_channels, out_channels, n, down_sample=False, up_sample=False
+    ):
+        super(WideResidualBlocks, self).__init__()
+        self.blocks = nn.Sequential(
+            *[
+                ResidualZeroPaddingBlock(
+                    in_channels if i == 0 else out_channels,
+                    out_channels,
+                    first_block=(i == 0),
+                    down_sample=down_sample,
+                    up_sample=up_sample,
+                )
+                for i in range(n)
+            ]
+        )
+
+    def forward(self, x):
+        return self.blocks(x)
+
+class Reshape(nn.Module):
+    def __init__(self, *target_shape):
+        super(Reshape, self).__init__()
+        self.target_shape = target_shape
+
+    def forward(self, x):
+        return x.view(x.size(0), *self.target_shape)
+
+class PretrainedAutoencoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        pretrained_model = models.resnext50_32x4d(weights=ResNeXt50_32X4D_Weights.IMAGENET1K_V1).to(config.device)
+        self.pretrained_encoder = nn.Sequential(*list(pretrained_model.children())[:-1]).to(config.device)
+        self.encoder = nn.Sequential(
+            nn.BatchNorm2d(2048),
+            nn.Flatten(),
+            nn.Linear(2048, 32, bias=False),
+            nn.Sigmoid()
+        ).to(config.device)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(32, 256),
+            Reshape(*[256, 1, 1]),
+            WideResidualBlocks(
+                256,
+                256,
+                1,
+                up_sample=True,
+            ),
+            nn.BatchNorm2d(256),
+            WideResidualBlocks(
+                256,
+                128,
+                1,
+                up_sample=True,
+            ),
+            nn.BatchNorm2d(128),
+            WideResidualBlocks(
+                128,
+                64,
+                1,
+                up_sample=True,
+            ),
+            nn.BatchNorm2d(64),
+            WideResidualBlocks(
+                64,
+                32,
+                1,
+                up_sample=True,
+            ),
+            nn.BatchNorm2d(32),
+            WideResidualBlocks(
+                32,
+                16,
+                1,
+                up_sample=True,
+            ),
+            nn.BatchNorm2d(16),
+            WideResidualBlocks(
+                16,
+                8,
+                1
+            ),
+            nn.BatchNorm2d(8),
+            nn.Conv2d(
+                8,
+                3,
+                kernel_size=3,
+                padding=1,
+            ),
+            nn.Sigmoid()
+        ).to(config.device)
+
+        ## Freeze all the parameters
+        # for param in self.pretrained_encoder.parameters():
+        #     param.requires_grad = False
+
+    def forward(self, x):
+        pretrained_features = self.pretrained_encoder(x)
+        features = self.encoder(pretrained_features).to(config.device)
+        reconstruction = self.decoder(features)
+        return features, reconstruction
 
 # KDE layer
 class KDE(nn.Module):
@@ -332,8 +490,7 @@ class UCCModel(nn.Module):
         kde_prob_distributions = self.kde(features)
         return kde_prob_distributions
 
-
-# RCC model
+#RCC model
 class RCCModel(nn.Module):
     def __init__(self, device=config.device, autoencoder_model=None, ucc_limit=config.ucc_limit, rcc_limit=config.rcc_limit):
         super().__init__()
@@ -345,8 +502,7 @@ class RCCModel(nn.Module):
         self.kde = KDE(device)
 
         self.shared_predictor_stack = nn.Sequential(
-            nn.Linear(352, 32, bias=False),
-            nn.Dropout(0.13),
+            nn.Linear(352, 32),
             nn.LeakyReLU()
         )
 
